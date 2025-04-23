@@ -9,7 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Tuple, Union, Callable
 
 from openfl.experimental.workflow.federated import Plan
 from openfl.experimental.workflow.transport import AggregatorGRPCServer
@@ -141,6 +141,29 @@ class Experiment:
             raise
 
         return self.status == Status.FINISHED, self.updated_flow
+
+    async def review_experiment(self, review_plan_callback: Callable) -> bool:
+        """Get plan approval in console."""
+        logger.debug("Experiment Review starts")
+        # Extract the workspace for review (without installing requirements)
+        with ExperimentWorkspace(
+            self.name,
+            self.archive_path,
+            install_requirements=False,
+            remove_archive=False
+        ):
+            loop = asyncio.get_event_loop()
+            # Call for a review in a separate thread (server is not blocked)
+            review_approve = await loop.run_in_executor(
+                None,
+                review_plan_callback,
+                self.name, self.plan_path
+            )
+            if not review_approve:
+                self.status = Status.REJECTED
+                self.archive_path.unlink(missing_ok=True)
+                return False
+        return True
 
     def _create_aggregator_grpc_server(
         self,

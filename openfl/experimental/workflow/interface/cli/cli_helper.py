@@ -6,12 +6,13 @@
 
 import os
 import re
+import time
 from itertools import islice
 from os import environ
 from pathlib import Path
 from sys import argv
 
-from click import echo, style
+from click import echo, style, confirm, open_file
 from yaml import FullLoader, load
 
 FX = argv[0]
@@ -140,3 +141,37 @@ def replace_line_in_file(line, line_num_to_replace, filename):
             else:
                 f.write(i)
         f.truncate()
+
+def review_plan_callback(file_name, file_path):
+    """
+    Review plan callback for Director and Envoy.
+
+    Args:
+        file_name (str): Name of the file to review.
+        file_path (str): Path of the file to review.
+
+    Returns:
+        bool: True if the file is accepted, False otherwise.
+    """
+    # Inform the user to review the file contents
+    echo(
+        style(
+            f"🧿 Please review the contents of 📂 {file_name} before proceeding...",
+            fg="green",
+            bold=True,
+        )
+    )
+    # Wait for users to read the question before flashing the contents of the file.
+    time.sleep(3)
+
+    # Display the contents of the file
+    with open_file(file_path, "r") as f:
+        echo(f.read())
+
+    # Ask for user confirmation to accept the file
+    if confirm(style(f"Do you want to accept the 📂 {file_name}❔", fg="green", bold=True)):
+        echo(style(f"{file_name} accepted!", fg="green", bold=True))
+        return True
+    else:
+        echo(style(f"{file_name} rejected!", fg="red", bold=True))
+        return False  # Return False on rejection
