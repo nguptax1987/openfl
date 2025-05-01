@@ -155,29 +155,17 @@ class Envoy:
                     if self.review_callback:
                         # envoy to review the experiment before running
                         logger.info("🧿 Reviewing the experiment plan before running...")
+                        # If review_plan_callback is provided, call it with the plan config path and the data file path
                         if not self.review_callback('plan', 'plan/plan.yaml'):
-                            #self._envoy_dir_client.send_experiment_failed(
-                                #experiment_name=experiment_name,
-                                #error_description='Experiment is rejected'
-                                #f' by Envoy "{self.name}" manager',
-                            #)
+                            self._envoy_dir_client.send_experiment_review_result(
+                                experiment_name=experiment_name,
+                                error_description='Experiment is rejected'
+                                f' by Envoy "{self.name}"',
+                            )
                             logger.warning(f'⚠️ Experiment "{experiment_name}" was rejected by Envoy "{self.name}".')
                             continue
                         logger.debug(f'Experiment "{experiment_name}" is accepted by Envoy "{self.name}".')
 
-                    # If review_plan_callback is provided, call it
-                    # with the plan config path and the data file path
-                    #if self.review_callback:
-                        # envoy to review the experiment before running
-                       # logger.info("🧿 Reviewing the experiment plan before running...")
-                       # if not self.review_callback('plan','plan/plan.yaml'):
-                        #if not self.review_callback(
-                        #    file_name=self.plan,
-                        #    file_path=data_file_path,
-                        #):
-                       #     logger.info("⚠️ Experiment plan review failed.")
-                            #self._envoy_dir_client. TBD
-                       #     continue
                     # Run the experiment
                     logger.info("🚀 Starting the experiment...")
                     # Set the experiment running flag to True to indicate that experiment is running

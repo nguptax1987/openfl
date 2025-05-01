@@ -172,6 +172,23 @@ class EnvoyDirectorClient:
             health_check_period = response.health_check_period.seconds
 
             return health_check_period
+    
+
+    def send_experiment_review_result(
+        self,
+        experiment_name: str,
+        error_code: int = 1,
+        error_description: str = ''
+    ) -> None:
+        
+        """Set the experiment failed."""
+        request = director_pb2.SendExperimentReviewResultRequest(
+            experiment_name=experiment_name,
+            collaborator_name=self.envoy_name,
+            error_code=error_code,
+            error_description=error_description
+        )
+        self.stub.SendExperimentReviewResult(request)
 
 
 class RuntimeDirectorClient:

@@ -18,6 +18,7 @@ from openfl.experimental.workflow.component.director.experiment import (
     ExperimentsRegistry,
 )
 from openfl.experimental.workflow.transport.grpc.exceptions import EnvoyNotFoundError
+from openfl.experimental.workflow.component.director.experiment import Status
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ class Director:
         if self.review_callback:
             review_approved = await experiment.review_experiment(self.review_callback)
             if not review_approved:
-                logger.warning(f"Experiment '{experiment_name}' was rejected❌ by the Admin.")
+                logger.warning(f"Experiment '{experiment_name}' was rejected❌ by the Director Admin.")
                 return False # Experiment rejected
 
         # Add the experiment to the registry
@@ -244,35 +245,7 @@ class Director:
             else:
                 # Yield none if the queue is empty but the experiment is still running.
                 yield None
-    
-    async def send_experiment_to_envoys_for_review(self, experiment: Experiment) -> bool:
-        """Send experiment to envoys for review.
 
-        Args:
-            experiment (Experiment): The experiment to be sent.
-
-        Returns:
-            bool: True if all envoys approve the experiment, False otherwise.
-        """
-        # Send the experiment to envoys for review
-        # This is a placeholder implementation. Replace with actual logic.
-        logger.info(f"Sending experiment {experiment.name} to envoys for review.")
-        # Send the experiment to each envoy for review
-        for envoy_name in self.authorized_cols:
-            try:
-                queue = self.col_exp_queues[envoy_name]
-                await queue.put(experiment.name)
-                logger.info(f"Sent review request for experiment '{experiment.name}' to envoy '{envoy_name}'.")
-            except Exception as e:
-
-                logger.error(f"Failed to send review request to envoy '{envoy_name}': {e}")
-                # Directly update review_responses with a rejection if sending fails
-                #self.process_review_response(envoy_name, experiment.name, "REJECT")
-                return False    
-        return False #simulating the review process for now in which envoys reject the experiment
-    
-        
-    
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.
@@ -355,3 +328,30 @@ class Director:
         )
 
         return self.envoy_health_check_period
+    
+    
+    def set_experiment_failed(self, *, experiment_name: str, collaborator_name: str):
+        """ Handle experiment Failure triggred by a collaborator.
+
+        Args:
+            experiment_name (str): String id for experiment.
+            collaborator_name (str): Name of the collaborator.
+        """
+        if experiment_name not in self.experiments_registry:
+            logger.warning(f"Experiment '{experiment_name}' not found in registry.")
+            return
+        experiment = self.experiments_registry[experiment_name]
+        aggregator = experiment.aggregator
+
+        if aggregator:
+            logger.info(f"Stopping aggregator for experiment '{experiment_name}' due to failure by collaborator '{collaborator_name}'.")
+            aggregator.stop(failed_collaborator=collaborator_name)
+
+        experiment.status = Status.FAILED
+        logger.info(f"Experiment '{experiment_name}' marked as FAILED.")
+
+
+        
+
+
+    

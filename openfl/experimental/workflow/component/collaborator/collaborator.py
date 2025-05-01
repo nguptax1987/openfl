@@ -138,6 +138,8 @@ class Collaborator:
         while True:
             next_step, clone, sleep_time, time_to_quit = self.get_tasks()
             if time_to_quit:
+                self.logger.info(f"Collaborator {self.name} received Quit signal. ⛔Shutting down.....")
+                self.logger.info("Received end of federation signal. Exiting...")
                 break
             elif sleep_time > 0:
                 time.sleep(sleep_time)

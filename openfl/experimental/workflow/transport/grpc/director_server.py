@@ -355,3 +355,23 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
                 await asyncio.sleep(1)
                 continue
             yield director_pb2.GetExperimentStdoutResponse(**stdout_dict)
+
+    async def SendExperimentReviewResult(self, request, context):
+        """Set the experiment failed."""
+        response = director_pb2.SendExperimentReviewResultResponse()
+        if self.get_caller(context) != CLIENT_ID_DEFAULT:
+            return response
+        logger.info(
+            '[Experiment Rejection] Collaborator "%s" rejected experiment "%s" '
+            'with Reason: (%s). '
+            'Initiating experiment termination.',
+            request.collaborator_name,
+            request.experiment_name,
+            request.error_description
+        )
+        self.director.set_experiment_failed(
+            experiment_name=request.experiment_name,
+            collaborator_name=request.collaborator_name
+        )
+
+        return response

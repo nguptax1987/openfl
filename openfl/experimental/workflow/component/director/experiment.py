@@ -14,7 +14,7 @@ from typing import Any, Iterable, List, Optional, Tuple, Union, Callable
 from openfl.experimental.workflow.federated import Plan
 from openfl.experimental.workflow.transport import AggregatorGRPCServer
 from openfl.utilities.workspace import ExperimentWorkspace
-
+from openfl.experimental.workflow.component.aggregator import Aggregator
 logger = logging.getLogger(__name__)
 
 
@@ -219,10 +219,13 @@ class Experiment:
         logger.info("Starting Aggregator gRPC Server")
 
         try:
+            # Wait for the server to finish
             while not aggregator_grpc_server.aggregator.all_quit_jobs_sent():
                 # Awaiting quit job sent to collaborators
                 await asyncio.sleep(10)
             logger.debug("Aggregator sent quit jobs calls to all collaborators")
+            # Wait for a while to ensure all quit jobs are sent
+            await asyncio.sleep(10)
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received. Stopping the server.")
         finally:
