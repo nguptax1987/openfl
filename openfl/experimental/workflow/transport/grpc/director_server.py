@@ -55,6 +55,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
         listen_port: int = 50051,
         envoy_health_check_period: int = 0,
         director_config: Optional[Path] = None,
+        review_callback=None,  # Add review_callback parameter
         **kwargs,
     ) -> None:
         """
@@ -78,6 +79,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             listen_port (int, optional): The port to listen on. Defaults to
                 50051.
             director_config (Optional[Path]): Path to director_config file
+            review_callback (Optional[Callable]): Callback function for reviewing experiment plans.
             **kwargs: Additional keyword arguments.
         """
         super().__init__()
@@ -93,6 +95,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             certificate=self.certificate,
             envoy_health_check_period=envoy_health_check_period,
             director_config=director_config,
+            review_callback=review_callback,  # Pass review_callback to Director
             **kwargs,
         )
 
@@ -311,7 +314,8 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             experiment_archive_path=data_file_path,
         )
 
-        logger.info("Experiment %s registered", request.name)
+        #logger.info("Experiment %s registered", request.name)
+        logger.info(f"Experiment '{request.name}' registration status: {'Approved' if is_accepted else 'Rejected'}")
         return director_pb2.SetNewExperimentResponse(status=is_accepted)
 
     async def GetFlowState(self, request, context) -> director_pb2.GetFlowStateResponse:
@@ -351,3 +355,23 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
                 await asyncio.sleep(1)
                 continue
             yield director_pb2.GetExperimentStdoutResponse(**stdout_dict)
+
+    async def SendExperimentReviewResult(self, request, context):
+        """Set the experiment failed."""
+        response = director_pb2.SendExperimentReviewResultResponse()
+        if self.get_caller(context) != CLIENT_ID_DEFAULT:
+            return response
+        logger.info(
+            '[Experiment Rejection] Collaborator "%s" rejected experiment "%s" '
+            'with Reason: (%s). '
+            'Initiating experiment termination.',
+            request.collaborator_name,
+            request.experiment_name,
+            request.error_description
+        )
+        self.director.set_experiment_failed(
+            experiment_name=request.experiment_name,
+            collaborator_name=request.collaborator_name
+        )
+
+        return response

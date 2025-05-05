@@ -14,6 +14,7 @@ from dynaconf import Validator
 from openfl.experimental.workflow.component.envoy import Envoy
 from openfl.utilities import is_fqdn, merge_configs
 from openfl.utilities.path_check import is_directory_traversal
+from openfl.experimental.workflow.interface.cli.cli_helper import review_plan_callback
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ def start_(
                 },
             ),
             Validator("params.install_requirements", default=True),
+            Validator("settings.review_experiment", default=False),
         ],
     )
 
@@ -136,12 +138,20 @@ def start_(
     else:
         install_requirements = False
 
+
+
     if config.root_certificate:
         config.root_certificate = Path(config.root_certificate).absolute()
     if config.private_key:
         config.private_key = Path(config.private_key).absolute()
     if config.certificate:
         config.certificate = Path(config.certificate).absolute()
+
+    # Check if review_experiment is enabled in the settings
+    review_experiment = config.settings.review_experiment
+
+    # Set the review callback if review_experiment is True
+    review_callback = review_plan_callback if review_experiment else None
 
     envoy = Envoy(
         envoy_name=envoy_name,
@@ -153,6 +163,7 @@ def start_(
         certificate=config.certificate,
         tls=tls,
         install_requirements=install_requirements,
+        review_callback=review_callback,
     )
 
     envoy.start()

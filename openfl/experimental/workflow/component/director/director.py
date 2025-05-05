@@ -18,6 +18,7 @@ from openfl.experimental.workflow.component.director.experiment import (
     ExperimentsRegistry,
 )
 from openfl.experimental.workflow.transport.grpc.exceptions import EnvoyNotFoundError
+from openfl.experimental.workflow.component.director.experiment import Status
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class Director:
         envoy_health_check_period (int): The period for health check of envoys
             in seconds.
         authorized_cols (list): A list of authorized envoys
+        review_callback (Optional[Callable]): A callback function for reviewing experiments.
     """
 
     def __init__(
@@ -57,6 +59,7 @@ class Director:
         director_config: Optional[Path] = None,
         envoy_health_check_period: int = 60,
         install_requirements: bool = True,
+        review_callback = None,  # Add review_callback parameter
     ) -> None:
         """Initialize a Director object.
 
@@ -74,6 +77,7 @@ class Director:
             in seconds.
             install_requirements (bool, optional): A flag indicating if the
                 requirements should be installed. Defaults to True.
+            review_callback (Optional[Callable]): A callback function for reviewing experiments.
         """
         self.tls = tls
         self.root_certificate = root_certificate
@@ -82,7 +86,7 @@ class Director:
         self.director_config = director_config
         self.install_requirements = install_requirements
         self._flow_status = asyncio.Queue()
-
+        self.review_callback = review_callback  # Store the review_callback
         self.experiments_registry = ExperimentsRegistry()
         self.col_exp = {}
         self.col_exp_queues = defaultdict(asyncio.Queue)
@@ -172,16 +176,16 @@ class Director:
         collaborator_names: Iterable[str],
         experiment_archive_path: Path,
     ) -> bool:
-        """Set new experiment.
+        """Set new experiment and optionally review experiment .
 
         Args:
-            experiment_name (str): String id for experiment.
-            sender_name (str): The name of the sender.
-            collaborator_names (Iterable[str]): Names of collaborators.
-            experiment_archive_path (Path): Path of the experiment.
+            experiment_name (str): Identifier for the new experiment.
+            sender_name (str): Initiator of the experiment.
+            collaborator_names (Iterable[str]): Participating collaborators.
+            experiment_archive_path (Path): Path to the experiment archive.
 
         Returns:
-            bool : Boolean returned if the experiment register was successful.
+            bool: True if the experiment is accepted and registered; False otherwise.
         """
         experiment = Experiment(
             name=experiment_name,
@@ -190,10 +194,18 @@ class Director:
             users=[sender_name],
             sender=sender_name,
         )
+        # Check if review callback is enabled
+        if self.review_callback:
+            review_approved = await experiment.review_experiment(self.review_callback)
+            if not review_approved:
+                logger.warning(f"Experiment '{experiment_name}' was rejected❌ by the Director Admin during review.")
+                return False # Experiment rejected
 
+        # Add the experiment to the registry
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
-        return True
+        logger.info(f"Experiment '{experiment_name}' was approved✅ and added to the registry.")
+        return True # Experiment approved
 
     async def stream_experiment_stdout(
         self, experiment_name: str, caller: str
@@ -233,6 +245,7 @@ class Director:
             else:
                 # Yield none if the queue is empty but the experiment is still running.
                 yield None
+
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.
@@ -315,3 +328,30 @@ class Director:
         )
 
         return self.envoy_health_check_period
+    
+    
+    def set_experiment_failed(self, *, experiment_name: str, collaborator_name: str):
+        """ Handle experiment Failure triggred by a collaborator.
+
+        Args:
+            experiment_name (str): String id for experiment.
+            collaborator_name (str): Name of the collaborator.
+        """
+        if experiment_name not in self.experiments_registry:
+            logger.warning(f"Experiment '{experiment_name}' not found in registry.")
+            return
+        experiment = self.experiments_registry[experiment_name]
+        aggregator = experiment.aggregator
+
+        if aggregator:
+            logger.info(f"Stopping aggregator for experiment '{experiment_name}' due to failure by collaborator '{collaborator_name}'.")
+            aggregator.stop(failed_collaborator=collaborator_name)
+
+        experiment.status = Status.FAILED
+        logger.info(f"Experiment '{experiment_name}' marked as FAILED.")
+
+
+        
+
+
+    

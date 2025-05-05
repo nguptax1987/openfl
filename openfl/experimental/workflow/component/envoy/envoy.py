@@ -9,7 +9,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 
 from openfl.experimental.workflow.federated import Plan
 from openfl.experimental.workflow.transport.grpc.director_client import EnvoyDirectorClient
@@ -56,6 +56,7 @@ class Envoy:
         certificate: Optional[Union[Path, str]] = None,
         tls: bool = True,
         install_requirements: bool = True,
+        review_callback: Union[None,Callable] = None,
     ) -> None:
         """Initialize a envoy object.
 
@@ -87,6 +88,7 @@ class Envoy:
         # experiment workspace provided by the director
         self.plan = "plan/plan.yaml"
         self._health_check_future = None
+        self.review_callback = review_callback
 
     def _create_envoy_dir_client(
         self, director_host: str, director_port: int
@@ -150,6 +152,23 @@ class Envoy:
                     data_file_path=data_file_path,
                     install_requirements=self.install_requirements,
                 ):
+                    if self.review_callback:
+                        # envoy to review the experiment before running
+                        logger.info("🧿 Reviewing the experiment plan before running...")
+                        # If review_plan_callback is provided, call it with the plan config path and the data file path
+                        if not self.review_callback('plan', 'plan/plan.yaml'):
+                            self._envoy_dir_client.send_experiment_review_result(
+                                experiment_name=experiment_name,
+                                error_description='Experiment is rejected'
+                                f' by Envoy "{self.name}"',
+                            )
+                            logger.warning(f'⚠️ Experiment "{experiment_name}" was rejected by Envoy "{self.name}".')
+                            continue
+                        logger.debug(f'Experiment "{experiment_name}" is accepted by Envoy "{self.name}".')
+
+                    # Run the experiment
+                    logger.info("🚀 Starting the experiment...")
+                    # Set the experiment running flag to True to indicate that experiment is running
                     self.is_experiment_running = True
                     self._run_collaborator()
             except Exception as exc:

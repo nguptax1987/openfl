@@ -220,6 +220,10 @@ class Aggregator:
                     logger.info(f"Tasks will not be sent to {k}")
 
             while not self.collaborator_task_results.is_set():
+                # Check if its time to quite 
+                if self.time_to_quit:
+                    logger.info("Time to quit detected. Exiting wait loop")
+                    break
                 len_sel_collabs = len(self.selected_collaborators)
                 len_connected_collabs = len(self.connected_collaborators)
                 if len_connected_collabs < len_sel_collabs:
@@ -243,13 +247,16 @@ class Aggregator:
                         + " collaborators to send results..."
                     )
                 await asyncio.sleep(Aggregator._get_sleep_time())
+            
+            if self.time_to_quit:
+                logger.info("Time to quit detected after waiting loop . Stopping aggregator")
+                break
 
             self.collaborator_task_results.clear()
             f_name = self.next_step
             if hasattr(self, "instance_snapshot"):
                 self.flow.restore_instance_snapshot(self.flow, list(self.instance_snapshot))
                 delattr(self, "instance_snapshot")
-
         return self.flow
 
     def call_checkpoint(
@@ -309,24 +316,31 @@ class Aggregator:
             f"Aggregator GetTasks function reached from collaborator {collaborator_name}..."
         )
 
+        
+        # Check if time_to_quit is set by aggregator . 
+        # If set, send quit job to collaborator and return
+        if self.time_to_quit:
+            return self._send_shutdown_signal(collaborator_name)
+
         # If queue of requesting collaborator is empty
         while self.__collaborator_tasks_queue[collaborator_name].qsize() == 0:
             # If it is time to then inform the collaborator
             if self.time_to_quit:
-                logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")
-                self.quit_job_sent_to.append(collaborator_name)
-                # FIXME: 0, and "" instead of None is just for protobuf compatibility.
-                #  Cleaner solution?
-                return (
-                    0,
-                    "",
-                    None,
-                    Aggregator._get_sleep_time(),
-                    self.time_to_quit,
-                )
-
+                return self._send_shutdown_signal(collaborator_name)
+            
             # If not time to quit then sleep for 10 seconds
             time.sleep(Aggregator._get_sleep_time())
+
+        '''
+        # Check if quit job is sent to collaborator
+        if collaborator_name in self.quit_job_sent_to:
+            logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")
+            return (0, "", None, Aggregator._get_sleep_time(), self.time_to_quit)
+        # Check if quit job is sent to all collaborators
+        if self.all_quit_jobs_sent():
+            logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")
+            return (0, "", None, Aggregator._get_sleep_time(), self.time_to_quit)
+        '''
 
         # Get collaborator step, and clone for requesting collaborator
         next_step, clone = self.__collaborator_tasks_queue[collaborator_name].get()
@@ -343,6 +357,14 @@ class Aggregator:
             0,
             self.time_to_quit,
         )
+    
+    def _send_shutdown_signal(self, collaborator_name: str) -> Tuple:
+        """Send a shutdown signal to the collaborator."""
+        if collaborator_name not in self.quit_job_sent_to:
+            logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")  
+            self.quit_job_sent_to.append(collaborator_name)
+        return (0, "", None, Aggregator._get_sleep_time(), self.time_to_quit)
+
 
     def do_task(self, f_name: str) -> Any:
         """Execute aggregator steps until transition.
@@ -514,7 +536,55 @@ class Aggregator:
 
     def all_quit_jobs_sent(self) -> bool:
         """Assert all quit jobs are sent to collaborators."""
+        #logger.info(f"self.quit_job_sent_to {self.quit_job_sent_to} ,self.authorized_cols {self.authorized_cols}") # Added for debugging
+        # Check if all quit jobs are sent to collaborators
         return set(self.quit_job_sent_to) == set(self.authorized_cols)
+    
+    '''
+    def stop(self, failed_collaborator: str = None) -> None:
+        """Stop the aggregator and all collaborators.
+
+        Args:
+            failed_collaborator (str, optional): Name of the failed
+                collaborator. Defaults to None.
+        """
+        if failed_collaborator is not None:
+            logger.info(f"Stopping aggregator due to failure of {failed_collaborator}.")
+        else:
+            logger.info("Stopping aggregator.")
+        self.time_to_quit = True
+        self.collaborator_task_results.set()
+        # Stop all collaborators
+        for collab in self.authorized_cols:
+            if collab not in self.quit_job_sent_to:
+                logger.info(f"Sending quit job to {collab}.")
+                self.quit_job_sent_to.append(collab)
+    ''' 
+    def stop(self, failed_collaborator: str = None) -> None:
+        """Stop the aggregator , failed collaborator and send quit jobs to all collaborators.
+
+        Args:
+            failed_collaborator (str, optional): Name of the failed
+                collaborator. Defaults to None.
+        """
+        logger.info("Force stopping the aggregator execution.")
+        self.time_to_quit = True  # Signal All collaborators to quit
+
+        if failed_collaborator:
+            logger.info(f"Stopping aggregator triggred by {failed_collaborator}.")
+            if failed_collaborator not in self.quit_job_sent_to:
+                logger.info(f"Sending quit job to {failed_collaborator}.")
+                self.quit_job_sent_to.append(failed_collaborator)
+        
+        # Send quit jobs to all collaborators.
+        #for collaborator_name in self.authorized_cols:
+            #if collaborator_name not in self.quit_job_sent_to:
+                #logger.info(f"Sending quit job to collaborator '{collaborator_name}'.")
+                #self.quit_job_sent_to.append(collaborator_name)
+           
+
+
+
 
 
 the_dragon = """
