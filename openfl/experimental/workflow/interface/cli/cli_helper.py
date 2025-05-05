@@ -142,31 +142,28 @@ def replace_line_in_file(line, line_num_to_replace, filename):
                 f.write(i)
         f.truncate()
 
-def review_plan_callback(file_name, file_path):
+def review_plan_callback(file_name: str, file_path) -> bool:
     """
-    Review plan callback for Director and Envoy.
+    CLI-based review callback used by the Director or Envoy to approve a plan file.
 
     Args:
-        file_name (str): Name of the file to review.
-        file_path (str): Path of the file to review.
+        file_name (str): Display name of the file to be reviewed.
+        file_path (Union[str, Path]): Path to the file containing the plan.
 
     Returns:
-        bool: True if the file is accepted, False otherwise.
+        bool: True if the user approves the file; False otherwise.
     """
-    # Inform the user to review the file contents
-    echo(
-        style(
-            f"🧿 Please review the contents of 📂 {file_name} before proceeding...",
-            fg="green",
-            bold=True,
-        )
-    )
-    # Wait for users to read the question before flashing the contents of the file.
-    time.sleep(3)
+    DISPLAY_DELAY_SECONDS = 3
 
-    # Display the contents of the file
-    with open_file(file_path, "r") as f:
-        echo(f.read())
+    echo(style(f"🧿 Please review the contents of 📂 {file_name} before proceeding...", fg="green", bold=True))
+    time.sleep(DISPLAY_DELAY_SECONDS)
+
+    try:
+        with open_file(file_path, "r") as f:
+            echo(f.read())
+    except Exception as e:
+        echo(style(f"⚠️ Failed to read file: {e}", fg="red", bold=True))
+        return False
 
     # Ask for user confirmation to accept the file
     if confirm(style(f"Do you want to accept the 📂 {file_name}❔", fg="green", bold=True)):

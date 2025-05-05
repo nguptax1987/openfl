@@ -176,16 +176,16 @@ class Director:
         collaborator_names: Iterable[str],
         experiment_archive_path: Path,
     ) -> bool:
-        """Set new experiment.
+        """Set new experiment and optionally review experiment .
 
         Args:
-            experiment_name (str): String id for experiment.
-            sender_name (str): The name of the sender.
-            collaborator_names (Iterable[str]): Names of collaborators.
-            experiment_archive_path (Path): Path of the experiment.
+            experiment_name (str): Identifier for the new experiment.
+            sender_name (str): Initiator of the experiment.
+            collaborator_names (Iterable[str]): Participating collaborators.
+            experiment_archive_path (Path): Path to the experiment archive.
 
         Returns:
-            bool : Boolean returned if the experiment register was successful.
+            bool: True if the experiment is accepted and registered; False otherwise.
         """
         experiment = Experiment(
             name=experiment_name,
@@ -198,7 +198,7 @@ class Director:
         if self.review_callback:
             review_approved = await experiment.review_experiment(self.review_callback)
             if not review_approved:
-                logger.warning(f"Experiment '{experiment_name}' was rejected❌ by the Director Admin.")
+                logger.warning(f"Experiment '{experiment_name}' was rejected❌ by the Director Admin during review.")
                 return False # Experiment rejected
 
         # Add the experiment to the registry

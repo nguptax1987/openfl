@@ -130,6 +130,7 @@ class Experiment:
                 _, self.updated_flow = await asyncio.gather(
                     self._run_aggregator_grpc_server(
                         aggregator_grpc_server,
+                        self._wait_for_all_quit_jobs,
                     ),
                     self.aggregator.run_flow(),
                 )
@@ -143,7 +144,18 @@ class Experiment:
         return self.status == Status.FINISHED, self.updated_flow
 
     async def review_experiment(self, review_plan_callback: Callable) -> bool:
-        """Get plan approval in console."""
+        """Get plan approval in console.
+        Asynchronously review the experiment plan using the provided callback.
+        The review runs in a separate thread to avoid blocking the server.
+        If rejected, the experiment is marked as REJECTED and its archive is deleted.
+
+        Args:
+            review_plan_callback (Callable): A callable that takes (name, plan_path) and returns a bool.
+
+        Returns:
+            bool: True if approved, False otherwise.
+        
+        """
         logger.debug("Experiment Review starts")
         # Extract the workspace for review (without installing requirements)
         with ExperimentWorkspace(
@@ -206,12 +218,14 @@ class Experiment:
     @staticmethod
     async def _run_aggregator_grpc_server(
         aggregator_grpc_server: AggregatorGRPCServer,
+        wait_for_all_quit_jobs: Callable[[Aggregator], None],
     ) -> None:
-        """Run aggregator.
+        """"
+        Run the aggregator gRPC server.
 
         Args:
-            aggregator_grpc_server (AggregatorGRPCServer): The aggregator gRPC
-                server to run.
+            aggregator_grpc_server (AggregatorGRPCServer): The aggregator gRPC server to run.
+            wait_for_all_quit_jobs (Callable): A function to wait for all quit jobs to be sent.
         """
         logger.info("🧿 Starting the Aggregator Service.")
         grpc_server = aggregator_grpc_server.get_server()
@@ -219,18 +233,29 @@ class Experiment:
         logger.info("Starting Aggregator gRPC Server")
 
         try:
-            # Wait for the server to finish
-            while not aggregator_grpc_server.aggregator.all_quit_jobs_sent():
-                # Awaiting quit job sent to collaborators
-                await asyncio.sleep(10)
+            # Wait for all quit jobs to be sent
+            await asyncio.wait_for(
+                wait_for_all_quit_jobs(aggregator_grpc_server.aggregator),
+                timeout=None,  # No timeout, but can be added if needed
+            )
             logger.debug("Aggregator sent quit jobs calls to all collaborators")
-            # Wait for a while to ensure all quit jobs are sent
-            await asyncio.sleep(10)
+        except asyncio.TimeoutError:
+            logger.error("Timeout while waiting for all quit jobs to be sent.")
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received. Stopping the server.")
         finally:
             grpc_server.stop(0)
+            logger.info("Aggregator gRPC Server stopped.")
 
+    async def _wait_for_all_quit_jobs(self, aggregator: Aggregator) -> None:
+        """
+        Wait until all quit jobs are sent.
+        Args:
+           aggregator (Aggregator): The aggregator instance.
+        """
+        while not aggregator.all_quit_jobs_sent():
+            await asyncio.sleep(10)
+            logger.debug("Waiting for all quit jobs to be sent.")
 
 class ExperimentsRegistry:
     """ExperimentsList class."""

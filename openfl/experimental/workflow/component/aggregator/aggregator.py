@@ -316,30 +316,21 @@ class Aggregator:
             f"Aggregator GetTasks function reached from collaborator {collaborator_name}..."
         )
 
+        
+        # Check if time_to_quit is set by aggregator . 
+        # If set, send quit job to collaborator and return
+        if self.time_to_quit:
+            return self._send_shutdown_signal(collaborator_name)
+
         # If queue of requesting collaborator is empty
         while self.__collaborator_tasks_queue[collaborator_name].qsize() == 0:
             # If it is time to then inform the collaborator
             if self.time_to_quit:
-                logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")
-                self.quit_job_sent_to.append(collaborator_name)
-                # FIXME: 0, and "" instead of None is just for protobuf compatibility.
-                #  Cleaner solution?
-                return (
-                    0,
-                    "",
-                    None,
-                    Aggregator._get_sleep_time(),
-                    self.time_to_quit,
-                )
-
+                return self._send_shutdown_signal(collaborator_name)
+            
             # If not time to quit then sleep for 10 seconds
             time.sleep(Aggregator._get_sleep_time())
-        
-        # Check if Shut down Signal is sent and time_to_quit is True set by aggrgator
-        if self.time_to_quit:
-            logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")
-            self.quit_job_sent_to.append(collaborator_name)
-            return (0, "", None, Aggregator._get_sleep_time(), self.time_to_quit)
+
         '''
         # Check if quit job is sent to collaborator
         if collaborator_name in self.quit_job_sent_to:
@@ -366,6 +357,14 @@ class Aggregator:
             0,
             self.time_to_quit,
         )
+    
+    def _send_shutdown_signal(self, collaborator_name: str) -> Tuple:
+        """Send a shutdown signal to the collaborator."""
+        if collaborator_name not in self.quit_job_sent_to:
+            logger.info(f"Sending signal to collaborator {collaborator_name} to shutdown...")  
+            self.quit_job_sent_to.append(collaborator_name)
+        return (0, "", None, Aggregator._get_sleep_time(), self.time_to_quit)
+
 
     def do_task(self, f_name: str) -> Any:
         """Execute aggregator steps until transition.
