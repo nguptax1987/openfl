@@ -55,6 +55,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
         listen_port: int = 50051,
         envoy_health_check_period: int = 0,
         director_config: Optional[Path] = None,
+        review_callback=None,  # Add review_callback parameter
         **kwargs,
     ) -> None:
         """
@@ -78,6 +79,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             listen_port (int, optional): The port to listen on. Defaults to
                 50051.
             director_config (Optional[Path]): Path to director_config file
+            review_callback (Optional[Callable]): Callback function for reviewing experiment plans.
             **kwargs: Additional keyword arguments.
         """
         super().__init__()
@@ -93,6 +95,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             certificate=self.certificate,
             envoy_health_check_period=envoy_health_check_period,
             director_config=director_config,
+            review_callback=review_callback,  # Pass review_callback to Director
             **kwargs,
         )
 
@@ -356,3 +359,35 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
                 await asyncio.sleep(1)
                 continue
             yield director_pb2.GetExperimentStdoutResponse(**stdout_dict)
+
+
+    async def SendExperimentReview(self, request, context):
+        """
+         Handle experiment review result from an envoy.
+
+         Args:
+            request (director_pb2.SendExperimentReviewRequest): Contains:
+               - envoy_name: Name of the envoy sending the review
+               - experiment_name: Name of the experiment being reviewed
+               - review_status: "APPROVE" or "REJECT"
+            context (grpc.ServicerContext): The gRPC context
+        Returns:
+            director_pb2.SendExperimentReviewResponse: Contains consensus_reached status
+
+        """
+        logger.info(f"Received review response from envoy '{request.envoy_name}' for experiment '{request.experiment_name}' with status '{request.review_status}'.")
+        # Process the review response in the Director
+        consensus_reached = self.director.process_review_response(
+            envoy_name=request.envoy_name,
+            experiment_name=request.experiment_name,
+            review_status=request.review_status,
+        )
+        # Create a response message
+        response = director_pb2.SendExperimentReviewResponse()
+        response.consensus_reached = consensus_reached
+        if consensus_reached:
+            logger.info(f"Consensus reached for experiment '{request.experiment_name}'.")
+        else:
+            logger.info(f"Consensus not reached for experiment '{request.experiment_name}'.")
+        return response
+
