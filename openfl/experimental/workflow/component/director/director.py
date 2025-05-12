@@ -18,6 +18,7 @@ from openfl.experimental.workflow.component.director.experiment import (
     ExperimentsRegistry,
 )
 from openfl.experimental.workflow.transport.grpc.exceptions import EnvoyNotFoundError
+from openfl.experimental.workflow.component.director.experiment import Status
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class Director:
         envoy_health_check_period (int): The period for health check of envoys
             in seconds.
         authorized_cols (list): A list of authorized envoys
+        review_callback (Optional[Callable]): A callback function for reviewing experiments.
     """
 
     def __init__(
@@ -57,6 +59,7 @@ class Director:
         director_config: Optional[Path] = None,
         envoy_health_check_period: int = 60,
         install_requirements: bool = True,
+        review_callback = None,  # Add review_callback parameter
     ) -> None:
         """Initialize a Director object.
 
@@ -74,6 +77,7 @@ class Director:
             in seconds.
             install_requirements (bool, optional): A flag indicating if the
                 requirements should be installed. Defaults to True.
+            review_callback (Optional[Callable]): A callback function for reviewing experiments.
         """
         self.tls = tls
         self.root_certificate = root_certificate
@@ -82,7 +86,7 @@ class Director:
         self.director_config = director_config
         self.install_requirements = install_requirements
         self._flow_status = asyncio.Queue()
-
+        self.review_callback = review_callback  # Store the review_callback
         self.experiments_registry = ExperimentsRegistry()
         self.col_exp = {}
         self.col_exp_queues = defaultdict(asyncio.Queue)
@@ -90,6 +94,7 @@ class Director:
         self.envoy_health_check_period = envoy_health_check_period
         # authorized_cols refers to envoy & collaborator pair (one to one mapping)
         self.authorized_cols = []
+        self.review_responses = defaultdict(dict)  # Initialize the shared dictionary as a defaultdict of dicts
 
     async def start_experiment_execution_loop(self) -> None:
         """Run tasks and experiments here"""
@@ -98,23 +103,52 @@ class Director:
             try:
                 async with self.experiments_registry.get_next_experiment() as experiment:
                     await self._wait_for_authorized_envoys()
-                    run_aggregator_future = loop.create_task(
-                        experiment.start(
-                            root_certificate=self.root_certificate,
-                            certificate=self.certificate,
-                            private_key=self.private_key,
-                            tls=self.tls,
-                            director_config=self.director_config,
-                            install_requirements=False,
-                        )
-                    )
+                    # add experiment to collaborator queues so that enovys  can review the experiment
                     # Adding the experiment to collaborators queues
                     for col_name in experiment.collaborators:
                         queue = self.col_exp_queues[col_name]
                         await queue.put(experiment.name)
+
+                    # Wait for all envoys to approve the experiment
+                    logger.info("? Waiting for envoy reviews...")
+                    consensus_reached = await self.wait_for_envoys_consensus(experiment)
+
+                    if not consensus_reached:
+                        logger.warning(f"? Experiment '{experiment.name}' rejected - skipping execution")
+                        experiment.status = Status.REJECTED
+                        await self._flow_status.put((False, experiment))
+                        logger.info(f"Experiment '{experiment.name}' marked as rejected and flow status updated.")
+                        continue # Skip to the next experiment if rejected
+
+                    # Start the experiment
+                    logger.info(f"? All participants approved - starting experiment '{experiment.name}'")
+                    
+                    try:
+
+                        run_aggregator_future = loop.create_task(
+                            experiment.start(
+                                root_certificate=self.root_certificate,
+                                certificate=self.certificate,
+                                private_key=self.private_key,
+                                tls=self.tls,
+                                director_config=self.director_config,
+                                install_requirements=False,
+                            )
+                        )
+                        # Wait for the experiment to complete
+                        flow_status = await run_aggregator_future
+                        await self._flow_status.put(flow_status)
+                        logger.info(f"? Experiment '{experiment.name}' completed successfully")
+
+                    except Exception as e:
+                        logger.error(f"? Error executing experiment '{experiment.name}': {e}")
+                        experiment.status = Status.FAILED
+                        raise
+                    # Adding the experiment to collaborators queues
+                    #for col_name in experiment.collaborators:
+                        #queue = self.col_exp_queues[col_name]
+                        #await queue.put(experiment.name)
                     # Wait for the experiment to complete and save the result
-                    flow_status = await run_aggregator_future
-                    await self._flow_status.put(flow_status)
             except Exception as e:
                 logger.error(f"Error while executing experiment: {e}")
                 raise
@@ -172,16 +206,16 @@ class Director:
         collaborator_names: Iterable[str],
         experiment_archive_path: Path,
     ) -> bool:
-        """Set new experiment.
+        """Set new experiment and optionally review experiment .
 
         Args:
-            experiment_name (str): String id for experiment.
-            sender_name (str): The name of the sender.
-            collaborator_names (Iterable[str]): Names of collaborators.
-            experiment_archive_path (Path): Path of the experiment.
+            experiment_name (str): Identifier for the new experiment.
+            sender_name (str): Initiator of the experiment.
+            collaborator_names (Iterable[str]): Participating collaborators.
+            experiment_archive_path (Path): Path to the experiment archive.
 
         Returns:
-            bool : Boolean returned if the experiment register was successful.
+            bool: True if the experiment is accepted and registered; False otherwise.
         """
         experiment = Experiment(
             name=experiment_name,
@@ -190,10 +224,18 @@ class Director:
             users=[sender_name],
             sender=sender_name,
         )
+        # Check if review callback is enabled
+        if self.review_callback:
+            review_approved = await experiment.review_experiment(self.review_callback)
+            if not review_approved:
+                logger.warning(f"Experiment '{experiment_name}' was rejected? by the Director Admin.")
+                return False # Experiment rejected
 
+        # Add the experiment to the registry
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
-        return True
+        logger.info(f"Experiment '{experiment_name}' was approved? by Director and added to the registry.")
+        return True # Experiment approved
 
     async def stream_experiment_stdout(
         self, experiment_name: str, caller: str
@@ -233,6 +275,47 @@ class Director:
             else:
                 # Yield none if the queue is empty but the experiment is still running.
                 yield None
+    async def wait_for_envoys_consensus(self, experiment: Experiment) -> bool:
+        """
+        wait for all envoys to respond with APPROVE or any REJCT
+        Returns True if all envoys approve, False if any reject.
+        """
+        # max_wait_time = 300  # seconds (5 minutes)
+        # start_time = asyncio.get_event_loop().time()
+        while True:
+            responses = self.review_responses.get(experiment.name, {})
+            # If all envoys have responded
+            if len(responses) == len(self.authorized_cols):
+                # Check if all responses are "APPROVE"
+                all_approve = all(status == "APPROVE" for status in responses.values())
+                return all_approve
+            
+            # --- Timeout logic commented for future iteration ---
+            # if asyncio.get_event_loop().time() - start_time > max_wait_time:
+            #     logger.warning(f"? Timeout waiting for envoy consensus on experiment '{experiment.name}'")
+            #     return False
+            await asyncio.sleep(1) #Waits for 1 second before the next check.
+
+
+
+    def process_review_response(self, envoy_name: str, experiment_name: str, review_status: str) -> bool:
+        """Process a review response from an envoy. Collects review responses and checks if consensus is achieved.
+        Args:
+             envoy_name (str): The name of the envoy sending the response.
+             experiment_name (str): The name of the experiment being reviewed.
+             review_status (str): The review status ("APPROVE" or "REJECT").
+        Returns:
+            bool: True if all envoys have responded and all responses are "APPROVE", False otherwise.
+        """
+        if experiment_name not in self.review_responses:
+            self.review_responses[experiment_name] = {}
+        self.review_responses[experiment_name][envoy_name] = review_status
+
+        # Only check consensus when all responses are in
+        if len(self.review_responses[experiment_name]) == len(self.authorized_cols):
+            all_approve = all(status == "APPROVE" for status in self.review_responses[experiment_name].values())
+            return all_approve
+        return False
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.
