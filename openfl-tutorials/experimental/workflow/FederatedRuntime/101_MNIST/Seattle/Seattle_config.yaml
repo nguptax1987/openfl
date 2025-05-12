@@ -1,6 +1,7 @@
 settings:
   director_host: localhost
   director_port: 50050
+  review_experiment: True  
   
 Seattle:
   private_attributes: private_attributes.seattle_attrs
