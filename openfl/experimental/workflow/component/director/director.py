@@ -95,12 +95,15 @@ class Director:
         # authorized_cols refers to envoy & collaborator pair (one to one mapping)
         self.authorized_cols = []
         self.review_responses = defaultdict(dict)  # Initialize the shared dictionary as a defaultdict of dicts
+        self._director_response = asyncio.Event()
+        self.review_concensus = None
 
     async def start_experiment_execution_loop(self) -> None:
         """Run tasks and experiments here"""
         loop = asyncio.get_event_loop()
         while True:
             try:
+                logger.info("waiting for an exp to run")
                 async with self.experiments_registry.get_next_experiment() as experiment:
                     await self._wait_for_authorized_envoys()
                     # add experiment to collaborator queues so that enovys  can review the experiment
@@ -116,18 +119,15 @@ class Director:
                     logger.info(f"consensus_reached: {consensus_reached}")
 
                     if not consensus_reached:
-                        logger.warning(f"Experiment '{experiment.name}' rejected - skipping execution")
-                        experiment.status = Status.REJECTED
-                        await self._flow_status.put((False, experiment))
-                        logger.info(f"Experiment '{experiment.name}' marked as rejected and flow status updated.")
-                        
+                        await self._process_review_rejection(experiment)
                         continue # Skip to the next experiment if rejected
-
+                    
+                    self.review_concensus = True
+                    self._director_response.set()
                     # Start the experiment
                     logger.info(f"All participants approved - starting experiment '{experiment.name}'")
                     
                     try:
-
                         run_aggregator_future = loop.create_task(
                             experiment.start(
                                 root_certificate=self.root_certificate,
@@ -147,19 +147,34 @@ class Director:
                         logger.error(f" Error executing experiment '{experiment.name}': {e}")
                         experiment.status = Status.FAILED
                         raise
-                    # Adding the experiment to collaborators queues
-                    #for col_name in experiment.collaborators:
-                        #queue = self.col_exp_queues[col_name]
-                        #await queue.put(experiment.name)
-                    # Wait for the experiment to complete and save the result
             except Exception as e:
                 logger.error(f"Error while executing experiment: {e}")
                 raise
-            #finally:
-                # Always reset the review responses for this experiment
-                #if experiment.name in self.review_responses:
-                    #del self.review_responses[experiment.name]
-                    #logger.info(f"✅ Cleared previous review responses for experiment '{experiment.name}'")
+            finally:
+                self._cleanup_experiment(experiment)
+                self._director_response.clear()
+
+    def _cleanup_experiment(self, experiment) -> None:
+        """Cleanup experiment"""
+        if experiment.name in self.review_responses:
+            self.review_responses.clear()
+            logger.info(f"✅ Cleared previous review responses for experiment '{experiment.name}'")
+        self.col_exp = dict.fromkeys(self.col_exp, None)
+        self.review_concensus = False
+
+    async def _process_review_rejection(self, experiment)-> None:
+        """process review rejection
+        
+        Args:
+            experiment(Experiment)
+        """
+        logger.warning(f"Experiment '{experiment.name}' rejected - skipping execution")
+        experiment.status = Status.REJECTED
+        await self._flow_status.put((False, None))
+        logger.info(f"Experiment '{experiment.name}' marked as rejected and flow status updated.")
+        self._cleanup_experiment(experiment)
+        self.review_concensus = False
+        self._director_response.set()
 
     async def _wait_for_authorized_envoys(self) -> None:
         """Wait until all authorized envoys are connected"""
@@ -270,7 +285,11 @@ class Director:
                 f'No experiment name "{experiment_name}" in experiments list, or caller "{caller}"'
                 f" does not have access to this experiment"
             )
-        while not self.experiments_registry[experiment_name].aggregator:
+        experiment = self.experiments_registry[experiment_name]
+        while not experiment.aggregator:
+            # Check if experiment is rejected in review
+            if experiment.status == Status.REJECTED:
+                return
             await asyncio.sleep(5)
         aggregator = self.experiments_registry[experiment_name].aggregator
         while True:
@@ -291,11 +310,14 @@ class Director:
         # max_wait_time = 300  # seconds (5 minutes)
         # start_time = asyncio.get_event_loop().time()
         while True:
-            responses = self.review_responses.get(experiment.name, {})
             # If all envoys have responded
+            responses = self.review_responses.get(experiment.name, {})
+            logger.info("waiting for envoy responses...")
             if len(responses) == len(self.authorized_cols):
                 # Check if all responses are "APPROVE"
-                all_approve = all(status == "APPROVE" for status in responses.values())
+                all_approve = all(status == "APPROVE" for status in responses.values()) 
+                logger.info("all envoys have responded")
+                logger.info(f"responses: {responses}")
                 return all_approve
             
             
@@ -318,14 +340,8 @@ class Director:
         """
 
         self.review_responses[experiment_name][envoy_name] = review_status
-
-        # Only check consensus when all responses are in
-        while not len(self.review_responses[experiment_name]) == len(self.authorized_cols):
-            await asyncio.sleep(1)
-        #check if all envoys have responded 
-        all_approve = all(status == "APPROVE" for status in self.review_responses[experiment_name].values())
-        return all_approve
-        
+        await self._director_response.wait()
+        return self.review_concensus
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.
