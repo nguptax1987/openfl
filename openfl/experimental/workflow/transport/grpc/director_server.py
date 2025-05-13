@@ -377,7 +377,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
         """
         logger.info(f"Received review response from envoy '{request.envoy_name}' for experiment '{request.experiment_name}' with status '{request.review_status}'.")
         # Process the review response in the Director
-        consensus_reached = self.director.process_review_response(
+        consensus_reached = await self.director.process_review_response(
             envoy_name=request.envoy_name,
             experiment_name=request.experiment_name,
             review_status=request.review_status,
