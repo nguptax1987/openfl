@@ -110,18 +110,21 @@ class Director:
                         await queue.put(experiment.name)
 
                     # Wait for all envoys to approve the experiment
-                    logger.info("? Waiting for envoy reviews...")
+                    logger.info("Waiting for envoy reviews...")
+
                     consensus_reached = await self.wait_for_envoys_consensus(experiment)
+                    logger.info(f"consensus_reached: {consensus_reached}")
 
                     if not consensus_reached:
-                        logger.warning(f"? Experiment '{experiment.name}' rejected - skipping execution")
+                        logger.warning(f"Experiment '{experiment.name}' rejected - skipping execution")
                         experiment.status = Status.REJECTED
                         await self._flow_status.put((False, experiment))
                         logger.info(f"Experiment '{experiment.name}' marked as rejected and flow status updated.")
+                        
                         continue # Skip to the next experiment if rejected
 
                     # Start the experiment
-                    logger.info(f"? All participants approved - starting experiment '{experiment.name}'")
+                    logger.info(f"All participants approved - starting experiment '{experiment.name}'")
                     
                     try:
 
@@ -138,10 +141,10 @@ class Director:
                         # Wait for the experiment to complete
                         flow_status = await run_aggregator_future
                         await self._flow_status.put(flow_status)
-                        logger.info(f"? Experiment '{experiment.name}' completed successfully")
+                        logger.info(f" Experiment '{experiment.name}' completed successfully")
 
                     except Exception as e:
-                        logger.error(f"? Error executing experiment '{experiment.name}': {e}")
+                        logger.error(f" Error executing experiment '{experiment.name}': {e}")
                         experiment.status = Status.FAILED
                         raise
                     # Adding the experiment to collaborators queues
@@ -152,6 +155,11 @@ class Director:
             except Exception as e:
                 logger.error(f"Error while executing experiment: {e}")
                 raise
+            #finally:
+                # Always reset the review responses for this experiment
+                #if experiment.name in self.review_responses:
+                    #del self.review_responses[experiment.name]
+                    #logger.info(f"✅ Cleared previous review responses for experiment '{experiment.name}'")
 
     async def _wait_for_authorized_envoys(self) -> None:
         """Wait until all authorized envoys are connected"""
@@ -234,7 +242,7 @@ class Director:
         # Add the experiment to the registry
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
-        logger.info(f"Experiment '{experiment_name}' was approved? by Director and added to the registry.")
+        logger.info(f"Experiment '{experiment_name}' was approved by Director and added to the registry.")
         return True # Experiment approved
 
     async def stream_experiment_stdout(
@@ -277,7 +285,7 @@ class Director:
                 yield None
     async def wait_for_envoys_consensus(self, experiment: Experiment) -> bool:
         """
-        wait for all envoys to respond with APPROVE or any REJCT
+        wait for all envoys to respond with APPROVE or  REJCT
         Returns True if all envoys approve, False if any reject.
         """
         # max_wait_time = 300  # seconds (5 minutes)
@@ -290,15 +298,16 @@ class Director:
                 all_approve = all(status == "APPROVE" for status in responses.values())
                 return all_approve
             
+            
             # --- Timeout logic commented for future iteration ---
             # if asyncio.get_event_loop().time() - start_time > max_wait_time:
-            #     logger.warning(f"? Timeout waiting for envoy consensus on experiment '{experiment.name}'")
+            #     logger.warning(f"Timeout waiting for envoy consensus on experiment '{experiment.name}'")
             #     return False
             await asyncio.sleep(1) #Waits for 1 second before the next check.
 
 
 
-    def process_review_response(self, envoy_name: str, experiment_name: str, review_status: str) -> bool:
+    async def process_review_response(self, envoy_name: str, experiment_name: str, review_status: str) -> bool:
         """Process a review response from an envoy. Collects review responses and checks if consensus is achieved.
         Args:
              envoy_name (str): The name of the envoy sending the response.
@@ -307,15 +316,16 @@ class Director:
         Returns:
             bool: True if all envoys have responded and all responses are "APPROVE", False otherwise.
         """
-        if experiment_name not in self.review_responses:
-            self.review_responses[experiment_name] = {}
+
         self.review_responses[experiment_name][envoy_name] = review_status
 
         # Only check consensus when all responses are in
-        if len(self.review_responses[experiment_name]) == len(self.authorized_cols):
-            all_approve = all(status == "APPROVE" for status in self.review_responses[experiment_name].values())
-            return all_approve
-        return False
+        while not len(self.review_responses[experiment_name]) == len(self.authorized_cols):
+            await asyncio.sleep(1)
+        #check if all envoys have responded 
+        all_approve = all(status == "APPROVE" for status in self.review_responses[experiment_name].values())
+        return all_approve
+        
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.
