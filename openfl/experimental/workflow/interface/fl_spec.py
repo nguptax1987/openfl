@@ -195,7 +195,8 @@ class FLSpec:
             submission_result = self.runtime.submit_experiment(archive_path, exp_name)
             if not submission_result:
               print(f"\033[91m? Experiment '{exp_name}' was rejected by the Director.\033[0m")
-              raise Exception(f"Experiment '{exp_name}' submission was rejected. Stopping execution.")
+              return 
+              #raise Exception(f"Experiment '{exp_name}' submission was rejected. Stopping execution.")
             #  Experiment was submitted successfully
             print(f"\033[92m? Experiment '{exp_name}' approved and running.\033[0m")
             # Stream the experiment's stdout if the checkpoint is enabled
@@ -204,7 +205,8 @@ class FLSpec:
             # Retrieve the flspec object to update the experiment state
             flspec_obj = self._get_flow_state()
             # Update state of self
-            self._update_from_flspec_obj(flspec_obj)
+            if flspec_obj:
+                self._update_from_flspec_obj(flspec_obj)
         except Exception as e:
             raise Exception(
                 f"FederatedRuntime: Experiment {exp_name} failed to run due to error: {e}"
