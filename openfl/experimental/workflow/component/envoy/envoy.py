@@ -150,7 +150,7 @@ class Envoy:
                 with ExperimentWorkspace(
                     experiment_name=f"{self.name}_{experiment_name}",
                     data_file_path=data_file_path,
-                    install_requirements=self.install_requirements,
+                    install_requirements=False,
                 ):
                     if self.review_callback:
                         # envoy to review the experiment before running
@@ -173,6 +173,7 @@ class Envoy:
                             logger.info(f"⚠️ Experiment \"{experiment_name}\" was rejected by Envoy \"{self.name}\".")
                             continue
                         logger.debug(f'Experiment "{experiment_name}" is accepted by Envoy "{self.name}".')
+                        time.sleep(self.DEFAULT_RETRY_TIMEOUT_IN_SECONDS) # wait for some time to let aggregator start
 
                     # Run the experiment
                     logger.info("🚀 Starting the experiment...")
