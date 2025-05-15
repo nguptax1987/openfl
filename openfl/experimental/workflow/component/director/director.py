@@ -9,7 +9,7 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, Iterable, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, Iterable, Optional, Tuple, Union, Callable
 
 import dill
 
@@ -19,6 +19,7 @@ from openfl.experimental.workflow.component.director.experiment import (
 )
 from openfl.experimental.workflow.transport.grpc.exceptions import EnvoyNotFoundError
 from openfl.experimental.workflow.component.director.experiment import Status
+from openfl.utilities.workspace import ExperimentWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class Director:
         director_config: Optional[Path] = None,
         envoy_health_check_period: int = 60,
         install_requirements: bool = True,
-        review_callback = None,  # Add review_callback parameter
+        review_callback: Optional[Callable] = None,
     ) -> None:
         """Initialize a Director object.
 
@@ -86,7 +87,7 @@ class Director:
         self.director_config = director_config
         self.install_requirements = install_requirements
         self._flow_status = asyncio.Queue()
-        self.review_callback = review_callback  # Store the review_callback
+        self.review_callback = review_callback
         self.experiments_registry = ExperimentsRegistry()
         self.col_exp = {}
         self.col_exp_queues = defaultdict(asyncio.Queue)
@@ -94,9 +95,9 @@ class Director:
         self.envoy_health_check_period = envoy_health_check_period
         # authorized_cols refers to envoy & collaborator pair (one to one mapping)
         self.authorized_cols = []
-        self.review_responses = defaultdict(dict)  # Initialize the shared dictionary as a defaultdict of dicts
-        self._director_response = asyncio.Event()
-        self.review_concensus = None
+        self.review_responses = defaultdict(dict) # Stores responses from collaborators
+        self._director_response = asyncio.Event() # Event signaling director's response
+        self.review_concensus = None # Final decision after review
 
     async def start_experiment_execution_loop(self) -> None:
         """Run tasks and experiments here"""
@@ -249,16 +250,16 @@ class Director:
         )
         # Check if review callback is enabled
         if self.review_callback:
-            review_approved = await experiment.review_experiment(self.review_callback)
+            review_approved = await self.review_experiment(experiment,self.review_callback)
             if not review_approved:
-                logger.warning(f"Experiment '{experiment_name}' was rejected? by the Director Admin.")
-                return False # Experiment rejected
+                logger.warning(f"Experiment '{experiment_name}' was rejected by the Director")
+                return False
 
         # Add the experiment to the registry
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
         logger.info(f"Experiment '{experiment_name}' was approved by Director and added to the registry.")
-        return True # Experiment approved
+        return True
 
     async def stream_experiment_stdout(
         self, experiment_name: str, caller: str
@@ -424,3 +425,28 @@ class Director:
         )
 
         return self.envoy_health_check_period
+    
+
+    async def review_experiment(self, experiment: Experiment, review_plan_callback: Callable, ) -> bool:
+        """Get plan approve in console."""
+        logger.debug("Experiment Review starts")
+        # Extract the workspace for review (without installing requirements)
+        with ExperimentWorkspace(
+            experiment.name,
+            experiment.archive_path,
+            install_requirements=False,
+            remove_archive=False,
+        ):
+            loop = asyncio.get_event_loop()
+            # Call for a review in a separate thread (server is not blocked)
+            review_approve = await loop.run_in_executor(
+                None,
+                review_plan_callback,
+                experiment.name,
+                experiment.plan_path
+            )
+            if not review_approve:
+                experiment.status = Status.REJECTED
+                experiment.archive_path.unlink(missing_ok=True)
+                return False
+        return True
