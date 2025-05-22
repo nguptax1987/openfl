@@ -147,42 +147,45 @@ class Envoy:
             data_file_path = self._save_data_stream_to_file(data_stream)
 
             try:
+                # Review phase start
                 with ExperimentWorkspace(
                     experiment_name=f"{self.name}_{experiment_name}",
                     data_file_path=data_file_path,
                     install_requirements=False,
                 ):
                     if self.review_callback:
-                        # envoy to review the experiment before running
-                        logger.info("🧿 Reviewing the experiment plan before running...")
+                        logger.info("🧿 Reviewing the experiment plan before execution...")
                         # If review_plan_callback is provided, call it with the plan config path and the data file path
-                        review_approved = self.review_callback('plan', 'plan/plan.yaml')
+                        is_review_approved = self.review_callback('plan', 'plan/plan.yaml')
+                        review_status = "APPROVE" if is_review_approved else "REJECT"
+                    else:
+                        # Auto-approve if no review callback is provided
+                        review_status = "APPROVE"    
 
-                        review_status = "APPROVE" if review_approved else "REJECT"
-                        # Send the review result to the director
-                        logger.info(f"🧿 Sending review result to the director: {review_status}")
-                         # Send review and wait for Director's approval in the same call
-                        consensus_reached = self._envoy_dir_client.send_experiment_review(
-                            envoy_name=self.name,
-                            experiment_name=experiment_name,
-                            review_status=review_status,
+                    # Send review decision to Director and receive consensus result
+                    logger.info(f"🧿 Sending review result to the director: {review_status}")
+                    consensus_reached = self._envoy_dir_client.send_experiment_review(
+                        envoy_name=self.name,
+                        experiment_name=experiment_name,
+                        review_status=review_status,
                         )
-                        
-                        if not consensus_reached:
-                            # Director says consensus not reached or rejected 
-                            logger.info(f"⚠️ Experiment \"{experiment_name}\" was rejected by Envoy \"{self.name}\".")
-                            continue
-                        logger.debug(f'Experiment "{experiment_name}" is accepted by Envoy "{self.name}".')
-                        time.sleep(self.DEFAULT_RETRY_TIMEOUT_IN_SECONDS) # wait for some time to let aggregator start
-
+                    
+                # Execution phase
+                    if not consensus_reached:
+                        # Director says consensus not reached or rejected 
+                        logger.info(f"⚠️ Experiment \"{experiment_name}\" was rejected by Envoy \"{self.name}\".")
+                        continue
+                    logger.debug(f'Experiment "{experiment_name}" is accepted by Envoy "{self.name}".')
                     # Run the experiment
-                    logger.info("🚀 Starting the experiment...")
-                    # Set the experiment running flag to True to indicate that experiment is running
+                    logger.info("🚀 Starting experiment execution...")
+                    # Set the experiment running flag
                     self.is_experiment_running = True
                     self._run_collaborator()
+ 
             except Exception as exc:
                 logger.exception("Collaborator failed with error: %s:", exc)
             finally:
+                # Reset running flag after execution or failure
                 self.is_experiment_running = False
 
     @staticmethod

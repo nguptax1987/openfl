@@ -194,11 +194,10 @@ class FLSpec:
             archive_path, exp_name = self.runtime.prepare_workspace_archive()
             submission_result = self.runtime.submit_experiment(archive_path, exp_name)
             if not submission_result:
-              print(f"\033[91m? Experiment '{exp_name}' was rejected by the Director.\033[0m")
+              print(f"\033[91m ❌Experiment '{exp_name}' was rejected.\033[0m")
               return 
-              #raise Exception(f"Experiment '{exp_name}' submission was rejected. Stopping execution.")
             #  Experiment was submitted successfully
-            print(f"\033[92m? Experiment '{exp_name}' approved and running.\033[0m")
+            print(f"\033[92m✅Experiment '{exp_name}' approved and running.\033[0m")
             # Stream the experiment's stdout if the checkpoint is enabled
             if self._checkpoint:
                 self.runtime.stream_experiment_stdout(exp_name)
