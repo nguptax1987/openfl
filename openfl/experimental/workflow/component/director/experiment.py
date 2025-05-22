@@ -142,6 +142,43 @@ class Experiment:
 
         return self.status == Status.FINISHED, self.updated_flow
 
+    async def review_experiment(self, review_plan_callback: Callable[[str, Path], bool]) -> bool:
+        """Asynchronously review the experiment plan using the provided callback.
+
+        The review runs in a separate thread to avoid blocking the server.
+        If rejected, the experiment is marked as REJECTED and its archive is deleted.
+
+        Args:
+            review_plan_callback (Callable): A callable that takes (name, plan_path) and returns a bool.
+
+        Returns:
+            bool: True if approved, False otherwise.
+        """
+        logger.debug("Experiment review started")
+        # Extract the workspace for review (without installing requirements)
+        with ExperimentWorkspace(
+            self.name,
+            self.archive_path,
+            install_requirements=False,
+            remove_archive=False
+        ):
+            loop = asyncio.get_event_loop()
+            # Call for a review in a separate thread (server is not blocked)
+            approved = await loop.run_in_executor(
+                None,
+                review_plan_callback,
+                self.name,
+                self.plan_path
+            )
+
+            if not approved:
+                self.status = Status.REJECTED
+                self.archive_path.unlink(missing_ok=True)
+                return False
+
+        return True
+    
+    
     def _create_aggregator_grpc_server(
         self,
         *,

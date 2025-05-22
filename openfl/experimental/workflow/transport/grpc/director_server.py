@@ -313,7 +313,8 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             collaborator_names=request.collaborator_names,
             experiment_archive_path=data_file_path,
         )
-
+        if not is_accepted:
+            return director_pb2.SetNewExperimentResponse(status=is_accepted)
         logger.info("Experiment %s registered", request.name)
         return director_pb2.SetNewExperimentResponse(status=is_accepted)
 
@@ -380,9 +381,9 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
         # Create a response message
         response = director_pb2.SendExperimentReviewResponse()
         response.consensus_reached = consensus_reached
-        if consensus_reached:
-            logger.info(f"Consensus reached for experiment '{request.experiment_name}'.")
-        else:
-            logger.info(f"Consensus not reached for experiment '{request.experiment_name}'.")
+        #if consensus_reached:
+            #logger.info(f"Consensus reached for experiment '{request.experiment_name}'.")
+        #else:
+            #logger.info(f"Consensus not reached for experiment '{request.experiment_name}'.")
         return response
 

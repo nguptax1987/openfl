@@ -172,7 +172,7 @@ class FederatedRuntime(Runtime):
             self.experiment_submitted = response.status
 
             if self.experiment_submitted:
-                print(f"\033[92m?Experiment '{exp_name}' was successfully submitted!\033[0m")
+                print(f"\033[92m✅Experiment '{exp_name}' was successfully submitted!\033[0m")
                 return True
             else:
                 #print(f"\033[91m ?Experiment '{exp_name}' submission was rejected by the Director\033[0m")
