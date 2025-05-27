@@ -78,7 +78,6 @@ class Director:
             in seconds.
             install_requirements (bool, optional): A flag indicating if the
                 requirements should be installed. Defaults to True.
-            review_callback (Optional[Callable]): A callback function for reviewing experiments.
         """
         self.tls = tls
         self.root_certificate = root_certificate
@@ -100,75 +99,82 @@ class Director:
         self.review_consensus = None # Final decision after review
 
     async def start_experiment_execution_loop(self) -> None:
-        """Run tasks and experiments here"""
-        loop = asyncio.get_event_loop()
+        """Main loop that waits for and runs tasks and experiments here."""
         while True:
             try:
                 logger.info("Waiting for an experiment to run...")
                 async with self.experiments_registry.get_next_experiment() as experiment:
                     await self._wait_for_authorized_envoys()
 
-                    # Review Phase - Director
-                    if self.review_callback:
-                        review_approved = await experiment.review_experiment(self.review_callback)
-                    else:
-                        review_approved = True # Auto-approve if callback is not set
+                    # Phase 1: Review (Director + Envoy)
+                    if not await self._review_phase(experiment): # Need more clarity here just check 
+                        continue  # Review failed, skip to next experiment
 
-                    # If review is not approved, update the experiment status to REJECTED
-                    if not review_approved:
-                        experiment.status = Status.REJECTED
-                        self.col_exp = dict.fromkeys(self.col_exp, None)
-                        self._review_decision_event.set() 
-                        continue
+                    # Phase 2: Execution 
+                    await self._execution_phase(experiment)
 
-                    # Review is approved Or auto approved by director add experiment to collaborators queues
-                    for col_name in experiment.collaborators:
-                        queue = self.col_exp_queues[col_name]
-                        await queue.put(experiment.name)
-
-                    # Review Phase - Envoys
-                    logger.info("Waiting for envoy reviews...")
-
-                    consensus_reached = await self.wait_for_all_envoy_reviews(experiment)
-                    logger.info(f"consensus_reached : {consensus_reached}")
-
-                    # If rejected by any envoy
-                    if not consensus_reached:
-                        await self._handle_review_rejection(experiment)
-                        # Skip to the next experiment if rejected
-                        continue 
-                    
-                    # Execution Phase
-                    self.review_consensus = True 
-                    logger.info(f"All participants approved - starting experiment '{experiment.name}'")
-                    try:
-                        run_aggregator_future = loop.create_task(
-                            experiment.start(
-                                root_certificate=self.root_certificate,
-                                certificate=self.certificate,
-                                private_key=self.private_key,
-                                tls=self.tls,
-                                director_config=self.director_config,
-                                install_requirements=False,
-                            )
-                        )
-                        self._review_decision_event.set() # Notify waiting parties
-
-                        # Wait for the experiment to complete
-                        flow_status = await run_aggregator_future
-                        await self._flow_status.put(flow_status)
-                        logger.info(f"Experiment '{experiment.name}' completed successfully.")
-
-                    except Exception as e:
-                        logger.error(f" Error executing experiment '{experiment.name}': {e}")
-                        experiment.status = Status.FAILED
-                        raise
             except Exception as e:
-                logger.error(f"Error while executing experiment: {e}")
+                logger.error(f"Error executing experiment '{experiment.name}': {e}")
+                experiment.status = Status.FAILED
                 raise
             finally:
                 self._cleanup_experiment(experiment)
                 self._review_decision_event.clear()
+
+    #----------------------- PHASE 1: REVIEW -----------------------------
+
+    async def _review_phase(self, experiment) -> bool:
+        """Handles both Director and Envoy review phases."""# update docstring
+        # Director Review
+        review_approved = await experiment.review_experiment( # check if await can be remv
+            self.review_callback
+        ) if self.review_callback else True
+
+        if not review_approved:
+            experiment.status = Status.REJECTED
+            self._review_decision_event.set()
+            return False
+        
+        # Notify envoys about the experiment
+        for col_name in experiment.collaborators:
+            await self.col_exp_queues[col_name].put(experiment.name)
+        
+        # Wait for envoy reviews
+        logger.info("Waiting for envoy reviews...")
+        consensus_reached = await self.wait_for_all_envoy_reviews(experiment)
+        logger.info(f"consensus_reached : {consensus_reached}")
+        if not consensus_reached:
+            await self._handle_review_rejection(experiment)
+            return False
+        
+        self.review_consensus = True
+        return True
+    
+    # ------------------------ PHASE 2: EXECUTION ------------------------
+
+    async def _execution_phase(self, experiment) -> None:
+        """Handles the execution phase of the experiment."""
+        loop = asyncio.get_event_loop()
+        logger.info(f"All participants approved - starting experiment '{experiment.name}'")
+        run_aggregator_future = loop.create_task(
+            experiment.start(
+                root_certificate=self.root_certificate,
+                certificate=self.certificate,
+                private_key=self.private_key,
+                tls=self.tls,
+                director_config=self.director_config,
+                install_requirements=False,
+            )
+        )
+
+        self._review_decision_event.set()  # Notify waiting parties
+
+        # Wait for the experiment to complete
+        flow_status = await run_aggregator_future
+        await self._flow_status.put(flow_status)
+        logger.info(f"Experiment '{experiment.name}' completed successfully.")
+
+    # ---------------------- CLEANUP AND REJECTION -----------------------
 
     def _cleanup_experiment(self, experiment) -> None:
         """Cleanup experiment resources and reset state.
@@ -195,8 +201,8 @@ class Director:
         """#TBS
         logger.info(f"Consensus not reached. Experiment '{experiment.name}' is rejected - skipping execution.")
         experiment.status = Status.REJECTED
-        await self._flow_status.put((False, None))
-        self._cleanup_experiment(experiment)
+        await self._flow_status.put((False, None))# need to check if it can be removed or not 
+        self._cleanup_experiment(experiment) #called at multiple time 
         self._review_decision_event.set()
 
     async def _wait_for_authorized_envoys(self) -> None:

@@ -162,14 +162,7 @@ class Experiment:
             install_requirements=False,
             remove_archive=False
         ):
-            loop = asyncio.get_event_loop()
-            # Call for a review in a separate thread (server is not blocked)
-            approved = await loop.run_in_executor(
-                None,
-                review_plan_callback,
-                self.name,
-                self.plan_path
-            )
+            approved = review_plan_callback(self.name, self.plan_path)
 
             if not approved:
                 self.status = Status.REJECTED
