@@ -102,25 +102,20 @@ class Director:
         self._review_decision_event = asyncio.Event()
         self.review_consensus = None
 
-    async def start_experiment_execution_loop(self) -> None:
-        """Main loop that waits for and runs tasks and experiments here."""
-        while True:
-            try:
-                logger.info("Waiting for an experiment to run...")
-                async with self.experiments_registry.get_next_experiment() as experiment:
-                    await self._wait_for_authorized_envoys()
-                    await self._review_phase(experiment)
-                    if not self.review_consensus:
-                        continue
-                    await self._execution_phase(experiment)
+    def _cleanup_experiment(self, experiment) -> None:
+        """Reset director state and clean up experiment resources.
 
-            except Exception as e:
-                logger.error(f"Error executing experiment '{experiment.name}': {e}")
-                experiment.status = Status.FAILED
-                raise
-            finally:
-                self._cleanup_experiment(experiment)
-                self._review_decision_event.clear()
+        Clears the experiment from the registry, resets collaborator states,
+        review responses, and consensus flag.
+
+        Args:
+            experiment (Experiment): The experiment to clean up.
+        """
+        if experiment.name in self.review_responses:
+            self.review_responses.clear()
+        self.col_exp = dict.fromkeys(self.col_exp, None)
+        self.review_consensus = False
+        self._review_decision_event.set()
 
     async def _review_phase(self, experiment) -> bool:
         """Coordinates director and envoy reviews.
@@ -138,7 +133,6 @@ class Director:
 
         if review_approved:
             consensus_reached = await self._envoy_review(experiment)
-            logger.info(f"consensus_reached : {consensus_reached}")
             if not consensus_reached:
                 experiment.status = Status.REJECTED
                 logger.info(
@@ -178,26 +172,12 @@ class Director:
                 install_requirements=False,
             )
         )
-        # Notify waiting parties
+        # Notify waiting participants that plan is approved
+        # and experiment is started
         self._review_decision_event.set()
         flow_status = await run_aggregator_future
         await self._flow_status.put(flow_status)
         logger.info(f"Experiment '{experiment.name}' completed successfully.")
-
-    def _cleanup_experiment(self, experiment) -> None:
-        """Reset director state and clean up experiment resources.
-
-        Clears the experiment from the registry, resets collaborator states,
-        review responses, and consensus flag.
-
-        Args:
-            experiment (Experiment): The experiment to clean up.
-        """
-        if experiment.name in self.review_responses:
-            self.review_responses.clear()
-        self.col_exp = dict.fromkeys(self.col_exp, None)
-        self.review_consensus = False
-        self._review_decision_event.set()
 
     async def _wait_for_authorized_envoys(self) -> None:
         """Wait until all authorized envoys are connected"""
@@ -210,6 +190,25 @@ class Director:
                 "authorized envoys to connect..."
             )
             await asyncio.sleep(10)
+
+    async def start_experiment_execution_loop(self) -> None:
+        """Main loop that waits for and runs tasks and experiments here."""
+        while True:
+            try:
+                logger.info("Waiting for an experiment to run...")
+                async with self.experiments_registry.get_next_experiment() as experiment:
+                    await self._wait_for_authorized_envoys()
+                    await self._review_phase(experiment)
+                    if not self.review_consensus:
+                        continue
+                    await self._execution_phase(experiment)
+            except Exception as e:
+                logger.error(f"Error executing experiment '{experiment.name}': {e}")
+                experiment.status = Status.FAILED
+                raise
+            finally:
+                self._cleanup_experiment(experiment)
+                self._review_decision_event.clear()
 
     async def get_flow_state(self) -> Tuple[bool, bytes]:
         """Wait until the experiment flow status indicates completion
