@@ -143,14 +143,14 @@ class Experiment:
         return self.status == Status.FINISHED, self.updated_flow
 
     def review_experiment(self, review_plan_callback: Callable[[str, Path], bool]) -> bool:
-        """Asynchronously review the experiment plan using the provided callback.
+        """Review the experiment plan.
 
-        The review runs in a separate thread to avoid blocking the server.
-        If rejected, the experiment is marked as REJECTED and its archive is deleted.
+        This method allows for reviewing the experiment plan before it is
+        executed.
 
         Args:
-            review_plan_callback (Callable): A callable that takes (name, plan_path)
-              and returns a bool.
+            review_plan_callback (Callable): A callable that takes
+                (experiment_name, plan_path)
 
         Returns:
             bool: True if approved, False otherwise.
@@ -161,12 +161,13 @@ class Experiment:
             self.name, self.archive_path, install_requirements=False, remove_archive=False
         ):
             approved = review_plan_callback(self.name, self.plan_path)
-
             if not approved:
                 self.status = Status.REJECTED
                 self.archive_path.unlink(missing_ok=True)
+                logger.info(f"Experiment {self.name} rejected")
                 return False
 
+        logger.info(f"Experiment {self.name} approved")
         return True
 
     def _create_aggregator_grpc_server(
