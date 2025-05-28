@@ -98,21 +98,26 @@ class EnvoyDirectorClient:
         response = self.stub.EnvoyConnectionRequest(request)
 
         return response.accepted
-    
-    def send_experiment_review(self, envoy_name: str, experiment_name: str, review_status: str) -> bool:
+
+    def send_experiment_review(
+        self, envoy_name: str, experiment_name: str, review_status: str
+    ) -> bool:
         """
         Send a review response to the director.
 
         Args:
-        envoy_name (str): The name of the envoy sending the response.
-        experiment_name (str): The name of the experiment being reviewed.
-        review_status (str): The review status ("APPROVE" or "REJECT").
+            envoy_name (str): The name of the envoy sending the response.
+            experiment_name (str): The name of the experiment being reviewed.
+            review_status (str): The review status ("APPROVE" or "REJECT").
 
         Returns:
-        bool: True if the response was successfully sent, False otherwise.
+            bool: True if the response was successfully sent, False otherwise.
         """
-        
-        logger.info(f"Sending review response for experiment '{experiment_name}' from envoy '{envoy_name}' with status '{review_status}'.")
+
+        logger.info(
+            f"Sending review response for experiment '{experiment_name}' from envoy '{envoy_name}' "
+            f"with status '{review_status}'."
+        )
 
         request = director_pb2.SendExperimentReviewRequest(
             envoy_name=envoy_name,
@@ -125,8 +130,6 @@ class EnvoyDirectorClient:
         except grpc.RpcError as rpc_error:
             logger.error(f"Failed to send review response: {rpc_error}")
             return False
-        
-
 
     def wait_experiment(self) -> str:
         """

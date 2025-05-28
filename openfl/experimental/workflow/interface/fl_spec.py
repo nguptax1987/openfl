@@ -137,7 +137,6 @@ class FLSpec:
             # Stop execution and print error message
             print(f"\033[91m? Flow execution stopped: {e}\033[0m")
             raise
-        
 
     def _run_local(self) -> None:
         """Executes the flow using LocalRuntime."""
@@ -194,8 +193,8 @@ class FLSpec:
             archive_path, exp_name = self.runtime.prepare_workspace_archive()
             submission_result = self.runtime.submit_experiment(archive_path, exp_name)
             if not submission_result:
-              print(f"\033[91m ❌Experiment '{exp_name}' was rejected.\033[0m")
-              return 
+                print(f"\033[91m ❌Experiment '{exp_name}' was rejected.\033[0m")
+                return
             #  Experiment was submitted successfully
             print(f"\033[92m✅Experiment '{exp_name}' approved and running.\033[0m")
             # Stream the experiment's stdout if the checkpoint is enabled

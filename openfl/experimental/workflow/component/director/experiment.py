@@ -9,7 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple, Union, Callable
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 from openfl.experimental.workflow.federated import Plan
 from openfl.experimental.workflow.transport import AggregatorGRPCServer
@@ -142,14 +142,15 @@ class Experiment:
 
         return self.status == Status.FINISHED, self.updated_flow
 
-    async def review_experiment(self, review_plan_callback: Callable[[str, Path], bool]) -> bool:
+    def review_experiment(self, review_plan_callback: Callable[[str, Path], bool]) -> bool:
         """Asynchronously review the experiment plan using the provided callback.
 
         The review runs in a separate thread to avoid blocking the server.
         If rejected, the experiment is marked as REJECTED and its archive is deleted.
 
         Args:
-            review_plan_callback (Callable): A callable that takes (name, plan_path) and returns a bool.
+            review_plan_callback (Callable): A callable that takes (name, plan_path)
+              and returns a bool.
 
         Returns:
             bool: True if approved, False otherwise.
@@ -157,10 +158,7 @@ class Experiment:
         logger.debug("Experiment review started")
         # Extract the workspace for review (without installing requirements)
         with ExperimentWorkspace(
-            self.name,
-            self.archive_path,
-            install_requirements=False,
-            remove_archive=False
+            self.name, self.archive_path, install_requirements=False, remove_archive=False
         ):
             approved = review_plan_callback(self.name, self.plan_path)
 
@@ -170,8 +168,7 @@ class Experiment:
                 return False
 
         return True
-    
-    
+
     def _create_aggregator_grpc_server(
         self,
         *,

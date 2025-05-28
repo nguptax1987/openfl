@@ -9,17 +9,16 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, Iterable, Optional, Tuple, Union, Callable
+from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Tuple, Union
 
 import dill
 
 from openfl.experimental.workflow.component.director.experiment import (
     Experiment,
     ExperimentsRegistry,
+    Status,
 )
 from openfl.experimental.workflow.transport.grpc.exceptions import EnvoyNotFoundError
-from openfl.experimental.workflow.component.director.experiment import Status
-from openfl.utilities.workspace import ExperimentWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,11 @@ class Director:
             in seconds.
         authorized_cols (list): A list of authorized envoys
         review_callback (Optional[Callable]): A callback function for reviewing experiments.
+        review_responses (defaultdict): A dictionary to store review responses
+            from envoys.
+        _review_decision_event (asyncio.Event): An event to signal the review decision.
+        review_consensus (Optional[bool]): A flag indicating if the review consensus
+            is reached.
     """
 
     def __init__(
@@ -94,9 +98,9 @@ class Director:
         self.envoy_health_check_period = envoy_health_check_period
         # authorized_cols refers to envoy & collaborator pair (one to one mapping)
         self.authorized_cols = []
-        self.review_responses = defaultdict(dict) # Stores responses from collaborators
-        self._review_decision_event = asyncio.Event() # Event signaling director's response
-        self.review_consensus = None # Final decision after review
+        self.review_responses = defaultdict(dict)
+        self._review_decision_event = asyncio.Event()
+        self.review_consensus = None
 
     async def start_experiment_execution_loop(self) -> None:
         """Main loop that waits for and runs tasks and experiments here."""
@@ -105,12 +109,9 @@ class Director:
                 logger.info("Waiting for an experiment to run...")
                 async with self.experiments_registry.get_next_experiment() as experiment:
                     await self._wait_for_authorized_envoys()
-
-                    # Phase 1: Review (Director + Envoy)
-                    if not await self._review_phase(experiment): # Need more clarity here just check 
-                        continue  # Review failed, skip to next experiment
-
-                    # Phase 2: Execution 
+                    await self._review_phase(experiment)
+                    if not self.review_consensus:
+                        continue
                     await self._execution_phase(experiment)
 
             except Exception as e:
@@ -121,36 +122,45 @@ class Director:
                 self._cleanup_experiment(experiment)
                 self._review_decision_event.clear()
 
-    #----------------------- PHASE 1: REVIEW -----------------------------
-
     async def _review_phase(self, experiment) -> bool:
-        """Handles both Director and Envoy review phases."""# update docstring
-        # Director Review
-        review_approved = await experiment.review_experiment( # check if await can be remv
-            self.review_callback
-        ) if self.review_callback else True
+        """Coordinates director and envoy reviews.
 
-        if not review_approved:
+        Args:
+            experiment (Experiment): The experiment to be reviewed.
+
+        Returns:
+            bool: True if the review consensus is reached, False otherwise.
+        """
+        review_approved = consensus_reached = True
+        if self.review_callback:
+            # Director review
+            review_approved = experiment.review_experiment(self.review_callback)
+
+        if review_approved:
+            consensus_reached = await self._envoy_review(experiment)
+            logger.info(f"consensus_reached : {consensus_reached}")
+            if not consensus_reached:
+                await self._handle_review_rejection(experiment)
+        else:
             experiment.status = Status.REJECTED
             self._review_decision_event.set()
-            return False
-        
-        # Notify envoys about the experiment
+
+        self.review_consensus = review_approved and consensus_reached
+
+    async def _envoy_review(self, experiment) -> bool:
+        """Notifies envoys and waits for their consensus.
+
+        Args:
+            experiment (Experiment): The experiment to be reviewed.
+
+        Returns:
+            bool: True if all envoys approve the experiment, False otherwise.
+        """
         for col_name in experiment.collaborators:
             await self.col_exp_queues[col_name].put(experiment.name)
-        
-        # Wait for envoy reviews
+
         logger.info("Waiting for envoy reviews...")
-        consensus_reached = await self.wait_for_all_envoy_reviews(experiment)
-        logger.info(f"consensus_reached : {consensus_reached}")
-        if not consensus_reached:
-            await self._handle_review_rejection(experiment)
-            return False
-        
-        self.review_consensus = True
-        return True
-    
-    # ------------------------ PHASE 2: EXECUTION ------------------------
+        return await self.wait_for_all_envoy_reviews(experiment)
 
     async def _execution_phase(self, experiment) -> None:
         """Handles the execution phase of the experiment."""
@@ -166,43 +176,39 @@ class Director:
                 install_requirements=False,
             )
         )
-
-        self._review_decision_event.set()  # Notify waiting parties
-
-        # Wait for the experiment to complete
+        # Notify waiting parties
+        self._review_decision_event.set()
         flow_status = await run_aggregator_future
         await self._flow_status.put(flow_status)
         logger.info(f"Experiment '{experiment.name}' completed successfully.")
 
-    # ---------------------- CLEANUP AND REJECTION -----------------------
-
     def _cleanup_experiment(self, experiment) -> None:
-        """Cleanup experiment resources and reset state.
-        This method is called when the experiment is completed or rejected.
-        It clears the experiment from the registry and resets the state of
-        the director.
-        It also clears the review responses and resets the review consensus
-        flag.
+        """Reset director state and clean up experiment resources.
+
+        Clears the experiment from the registry, resets collaborator states,
+        review responses, and consensus flag.
+
         Args:
-            experiment(Experiment): The experiment to be cleaned up.
-        """#TBS
+            experiment (Experiment): The experiment to clean up.
+        """
         if experiment.name in self.review_responses:
             self.review_responses.clear()
         self.col_exp = dict.fromkeys(self.col_exp, None)
         self.review_consensus = False
 
-    async def _handle_review_rejection(self, experiment)-> None:
-        """process review rejection
-        this method is called when any envoy rejects the experiment.
-        It updates the experiment status to REJECTED and cleans up the experiment.
-        It also signals the director response event to notify that the review is done.
+    async def _handle_review_rejection(self, experiment) -> None:
+        """Handle experiment rejection.
+
+        Marks experiment as REJECTED, cleans up resources, and signals review completion.
+
         Args:
-            experiment(Experiment)
-        """#TBS
-        logger.info(f"Consensus not reached. Experiment '{experiment.name}' is rejected - skipping execution.")
+            experiment (Experiment): The rejected experiment.
+        """
+        logger.info(
+            f"Consensus not reached. Experiment '{experiment.name}is rejected - skipping execution."
+        )
         experiment.status = Status.REJECTED
-        await self._flow_status.put((False, None))# need to check if it can be removed or not 
-        self._cleanup_experiment(experiment) #called at multiple time 
+        self._cleanup_experiment(experiment)  # called at multiple time
         self._review_decision_event.set()
 
     async def _wait_for_authorized_envoys(self) -> None:
@@ -281,13 +287,13 @@ class Director:
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
 
-        # If review is enabled, wait for review result
-        #if self.review_callback:
         await self._review_decision_event.wait()
-        if experiment.status == Status.REJECTED:  
+        if experiment.status == Status.REJECTED:
             return False
-        # If review is not enabled, auto-approve the experiment
-        logger.info(f"Experiment '{experiment_name}' was Auto approved by Director and added to the registry.")
+        logger.info(
+            f"Experiment '{experiment_name}' was Auto approved by Director "
+            "and added to the registry."
+        )
         return True
 
     async def stream_experiment_stdout(
@@ -315,7 +321,7 @@ class Director:
                 f'No experiment name "{experiment_name}" in experiments list, or caller "{caller}"'
                 f" does not have access to this experiment"
             )
-        
+
         while not self.experiments_registry[experiment_name].aggregator:
             await asyncio.sleep(5)
         aggregator = self.experiments_registry[experiment_name].aggregator
@@ -331,32 +337,35 @@ class Director:
                 yield None
 
     async def wait_for_all_envoy_reviews(self, experiment: Experiment) -> bool:
-        """wait for all envoys to respond with APPROVE or  REJECT."""
-        while True:
-            
-            responses = self.review_responses.get(experiment.name, {})
-            # Check if all envoys have responded
-            if len(responses) == len(self.authorized_cols):
-                # Check if all responses are "APPROVE"
-                all_approve = all(status == "APPROVE" for status in responses.values()) 
-                logger.info("All envoys have responded.")
-                #logger.info(f"responses: {responses}")
-                return all_approve
-            
-            await asyncio.sleep(1) #Waits for 1 second before the next check.
+        """Wait for all envoys to respond with APPROVE or REJECT.
 
-
-
-    async def process_review_response(self, envoy_name: str, experiment_name: str, review_status: str) -> bool:
-        """Process a review response from an envoy. Collects review responses and checks if consensus is achieved.
         Args:
-             envoy_name (str): The name of the envoy sending the response.
-             experiment_name (str): The name of the experiment being reviewed.
-             review_status (str): The review status ("APPROVE" or "REJECT").
+            experiment (Experiment): The experiment being reviewed.
         Returns:
-            bool: True if all envoys have responded and all responses are "APPROVE", False otherwise.
+            bool: True if all envoys approve the experiment, False otherwise.
         """
+        expected_count = len(self.authorized_cols)
+        while True:
+            responses = self.review_responses.get(experiment.name, {})
+            if len(responses) == expected_count:
+                all_approve = all(status == "APPROVE" for status in responses.values())
+                logger.info(f"All envoys have responded for experiment '{experiment.name}'.")
+                return all_approve
 
+            await asyncio.sleep(1)  # Waits for 1 second before the next check.
+
+    async def process_review_response(
+        self, envoy_name: str, experiment_name: str, review_status: str
+    ) -> bool:
+        """Process a review response from an envoy. Collects review responses and
+            check if consensus is achieved.
+        Args:
+             envoy_name (str): Envoy sending the response.
+             experiment_name (str): The name of the experiment being reviewed.
+             review_status (str): "APPROVE" or "REJECT".
+        Returns:
+            bool: True if all envoys approve the experiment, False otherwise.
+        """
         self.review_responses[experiment_name][envoy_name] = review_status
         await self._review_decision_event.wait()
         return self.review_consensus
@@ -442,29 +451,3 @@ class Director:
         )
 
         return self.envoy_health_check_period
-    
-'''
-    async def review_experiment(self, experiment: Experiment, review_plan_callback: Callable, ) -> bool:
-        """Get plan approve in console."""
-        logger.debug("Experiment Review starts")
-        # Extract the workspace for review (without installing requirements)
-        with ExperimentWorkspace(
-            experiment.name,
-            experiment.archive_path,
-            install_requirements=False,
-            remove_archive=False,
-        ):
-            loop = asyncio.get_event_loop()
-            # Call for a review in a separate thread (server is not blocked)
-            review_approve = await loop.run_in_executor(
-                None,
-                review_plan_callback,
-                experiment.name,
-                experiment.plan_path
-            )
-            if not review_approve:
-                experiment.status = Status.REJECTED
-                experiment.archive_path.unlink(missing_ok=True)
-                return False
-        return True
-'''
