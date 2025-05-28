@@ -162,9 +162,10 @@ class FederatedRuntime(Runtime):
         Args:
             archive_path (str): Archive file path containing the workspace.
             exp_name (str): The name of the experiment to be submitted.
-        
+
         Returns:
-            bool: True if experiment was accepted or submitted succesfully , False if rejected or not submitted to director
+            bool: True if experiment was accepted or submitted succesfully
+                , False if rejected or not submitted to director
         """
         try:
             response = self._runtime_dir_client.set_new_experiment(
@@ -176,11 +177,7 @@ class FederatedRuntime(Runtime):
                 print(f"\033[92m✅Experiment '{exp_name}' was successfully submitted!\033[0m")
                 return True
             else:
-                #print(f"\033[91m ?Experiment '{exp_name}' submission was rejected by the Director\033[0m")
                 return False
-                #raise RuntimeError(
-                    #f"Failed to submit experiment '{exp_name}' to the director. Rejected by director."
-                #)
         finally:
             self.remove_workspace_archive(archive_path)
 

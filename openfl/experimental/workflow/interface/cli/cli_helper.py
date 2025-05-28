@@ -12,7 +12,7 @@ from os import environ
 from pathlib import Path
 from sys import argv
 
-from click import echo, style, confirm, open_file
+from click import confirm, echo, open_file, style
 from yaml import FullLoader, load
 
 FX = argv[0]
@@ -141,6 +141,7 @@ def replace_line_in_file(line, line_num_to_replace, filename):
                 f.write(i)
         f.truncate()
 
+
 def review_plan_callback(file_name: str, file_path) -> bool:
     """
     Review plan callback for Director and Envoy.
@@ -154,7 +155,13 @@ def review_plan_callback(file_name: str, file_path) -> bool:
     """
     DISPLAY_DELAY_SECONDS = 3
 
-    echo(style(f"🧿 Please review the contents of 📂 {file_name} before proceeding...", fg="green", bold=True))
+    echo(
+        style(
+            f"🧿 Please review the contents of 📂 {file_name} before proceeding...",
+            fg="green",
+            bold=True,
+        )
+    )
     time.sleep(DISPLAY_DELAY_SECONDS)
 
     try:

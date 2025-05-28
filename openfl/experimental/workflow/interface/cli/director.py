@@ -12,10 +12,10 @@ from click import group, option, pass_context
 from dynaconf import Validator
 
 from openfl.experimental.workflow.component.director import Director
+from openfl.experimental.workflow.interface.cli.cli_helper import review_plan_callback
 from openfl.experimental.workflow.transport import DirectorGRPCServer
 from openfl.utilities import merge_configs
 from openfl.utilities.path_check import is_directory_traversal
-from openfl.experimental.workflow.interface.cli.cli_helper import review_plan_callback
 
 logger = logging.getLogger(__name__)
 
