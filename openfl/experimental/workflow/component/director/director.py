@@ -161,7 +161,6 @@ class Director:
     async def _execution_phase(self, experiment) -> None:
         """Handles the execution phase of the experiment."""
         loop = asyncio.get_event_loop()
-        logger.info(f"All participants approved - starting experiment '{experiment.name}'")
         run_aggregator_future = loop.create_task(
             experiment.start(
                 root_certificate=self.root_certificate,
@@ -274,14 +273,9 @@ class Director:
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
 
+        # Waiting for experiment review plan decision
         await self._review_decision_event.wait()
-        if experiment.status == Status.REJECTED:
-            return False
-        logger.info(
-            f"Experiment '{experiment_name}' was Auto approved by Director "
-            "and added to the registry."
-        )
-        return True
+        return experiment.status != Status.REJECTED
 
     async def stream_experiment_stdout(
         self, experiment_name: str, caller: str
