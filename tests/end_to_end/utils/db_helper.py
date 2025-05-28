@@ -4,6 +4,7 @@
 import os
 import sqlite3
 import time
+import logging
 
 import tests.end_to_end.utils.exceptions as ex
 
@@ -14,7 +15,7 @@ import tests.end_to_end.utils.exceptions as ex
 # Columns: id, tensor_name, origin, round, report, tags, nparray
 # Table: tensors
 # Columns: id, tensor_name, origin, round, report, tags, nparray
-
+log = logging.getLogger(__name__)
 
 class DBHelper:
     def __init__(self, db_name):
@@ -53,7 +54,7 @@ class DBHelper:
         return key_value_dict
 
 
-def get_key_value_from_db(key, database_file, max_retries=10, sleep_interval=5):
+def get_key_value_from_db(key, database_file, max_retries=15, sleep_interval=10):
     """
     Get value by key from the database file
     Args:
@@ -72,9 +73,9 @@ def get_key_value_from_db(key, database_file, max_retries=10, sleep_interval=5):
             val = db_obj.read_key_value_store().get(key)
             if val:
                 return val
-            print(f"Value not found in the database. Retrying in {sleep_interval} seconds...")
+            log.info(f"Value not found in the database. Retrying in {sleep_interval} seconds...")
         else:
-            print(f"Database file not found. Retrying in {sleep_interval} seconds...")
+            log.info(f"Database file not found. Retrying in {sleep_interval} seconds...")
 
         time.sleep(sleep_interval)
         retries += 1

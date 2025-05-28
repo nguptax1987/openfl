@@ -1,4 +1,4 @@
-# Copyright 2020-2023 Intel Corporation
+# Copyright 2020-2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 """Module consists of custom exceptions for end to end testing"""
@@ -123,4 +123,39 @@ class GaNDLFConfigSegException(Exception):
 
 class FlowerAppException(Exception):
     """Exception for Flower app"""
+    pass
+
+
+class ProcessKillException(Exception):
+    """Exception for process kill"""
+    pass
+
+
+class HashCalculationException(Exception):
+    """Exception for hash calculation of collaborator's data path"""
+    pass
+
+
+class MinioServerStartException(Exception):
+    """Exception for minio server start"""
+    pass
+
+
+class S3BucketCreationException(Exception):
+    """Exception for S3 bucket creation"""
+    pass
+
+
+class DataDownloadException(Exception):
+    """Exception for data download"""
+    pass
+
+
+class DataUploadToS3Exception(Exception):
+    """Exception for data upload to S3"""
+    pass
+
+
+class AzureBlobContainerCreationException(Exception):
+    """Exception for Azure Blob container creation"""
     pass

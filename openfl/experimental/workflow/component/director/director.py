@@ -105,14 +105,12 @@ class Director:
                 logger.info("Waiting for an experiment to run...")
                 async with self.experiments_registry.get_next_experiment() as experiment:
                     await self._wait_for_authorized_envoys()
-
                     # Phase 1: Review (Director + Envoy)
                     if not await self._review_phase(experiment): # Need more clarity here just check 
                         continue  # Review failed, skip to next experiment
 
                     # Phase 2: Execution 
                     await self._execution_phase(experiment)
-
             except Exception as e:
                 logger.error(f"Error executing experiment '{experiment.name}': {e}")
                 experiment.status = Status.FAILED

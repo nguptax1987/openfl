@@ -13,7 +13,7 @@ runs:
   steps:
     - name: Print test summary
       id: print_test_summary
-      if: ${{ always() }}
+      if: success() || failure()  # Run only on success or failure (i.e. not for skipped and cancelled jobs)
       run: |
         export PYTHONPATH="$PYTHONPATH:."
         python tests/end_to_end/utils/summary_helper.py --func_name "print_task_runner_score"
@@ -24,7 +24,7 @@ runs:
       id: tar_files
       if: ${{ always() }}
       run: |
-        tar -cvf result.tar --exclude="cert" --exclude="data" --exclude="__pycache__" --exclude="tensor.db" --exclude="workspace.tar" $HOME/results
+        tar -cvf result.tar --exclude="cert" --exclude="data" --exclude="__pycache__" --exclude="tensor.db" --exclude="workspace.tar" --exclude="minio_data" $HOME/results
         # Model name might contain forward slashes, convert them to underscore. 
         tmp=${{ env.MODEL_NAME }}
         echo "MODEL_NAME_MODIFIED=${tmp//\//_}" >> $GITHUB_ENV

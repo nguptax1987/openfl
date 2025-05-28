@@ -11,6 +11,7 @@ from typing import Optional, Tuple
 import grpc
 
 from openfl.protocols import aggregator_pb2, aggregator_pb2_grpc, utils
+from openfl.protocols.aggregator_client_interface import AggregatorClientInterface
 from openfl.transport.grpc.common import create_header, create_insecure_channel, create_tls_channel
 
 logger = logging.getLogger(__name__)
@@ -165,8 +166,10 @@ def _resend_data_on_reconnection(func):
     return wrapper
 
 
-class AggregatorGRPCClient:
+class AggregatorGRPCClient(AggregatorClientInterface):
     """Collaborator-side gRPC client that talks to the aggregator.
+
+    This class implements a gRPC client for communicating with an aggregator.
 
     Attributes:
         agg_addr (str): Aggregator address.
@@ -288,6 +291,25 @@ class AggregatorGRPCClient:
         logger.info("Connecting to gRPC at %s", self.uri)
 
         self.stub = aggregator_pb2_grpc.AggregatorStub(self.channel)
+
+    @_resend_data_on_reconnection
+    @_atomic_connection
+    def ping(self):
+        """Ping the aggregator to check connectivity."""
+        logger.info("Aggregator ping...")
+        header = create_header(
+            sender=self.collaborator_name,
+            receiver=self.aggregator_uuid,
+            federation_uuid=self.federation_uuid,
+            single_col_cert_common_name=self.single_col_cert_common_name,
+        )
+        request = aggregator_pb2.PingRequest(header=header)
+        response = self.stub.Ping(request)
+        if response:
+            self.validate_response(response)
+            logger.info("Aggregator pong!")
+        else:
+            logger.warning("Aggregator ping failed...")
 
     @_resend_data_on_reconnection
     @_atomic_connection
