@@ -139,11 +139,13 @@ class Director:
             consensus_reached = await self._envoy_review(experiment)
             logger.info(f"consensus_reached : {consensus_reached}")
             if not consensus_reached:
-                await self._handle_review_rejection(experiment)
+                experiment.status = Status.REJECTED
+                logger.info(
+                    f"Consensus not reached. Experiment '{experiment.name} "
+                    "is rejected - skipping execution."
+                )
         else:
             experiment.status = Status.REJECTED
-            self._review_decision_event.set()
-
         self.review_consensus = review_approved and consensus_reached
 
     async def _envoy_review(self, experiment) -> bool:
@@ -194,20 +196,6 @@ class Director:
             self.review_responses.clear()
         self.col_exp = dict.fromkeys(self.col_exp, None)
         self.review_consensus = False
-
-    async def _handle_review_rejection(self, experiment) -> None:
-        """Handle experiment rejection.
-
-        Marks experiment as REJECTED, cleans up resources, and signals review completion.
-
-        Args:
-            experiment (Experiment): The rejected experiment.
-        """
-        logger.info(
-            f"Consensus not reached. Experiment '{experiment.name}is rejected - skipping execution."
-        )
-        experiment.status = Status.REJECTED
-        self._cleanup_experiment(experiment)  # called at multiple time
         self._review_decision_event.set()
 
     async def _wait_for_authorized_envoys(self) -> None:
