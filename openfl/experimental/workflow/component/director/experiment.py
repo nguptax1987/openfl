@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
@@ -43,6 +44,11 @@ class Experiment:
             status (str): The status of the experiment.
             aggregator (Aggregator): The aggregator instance.
             updated_flow (FLSpec): Updated flow instance.
+            review_responses (defaultdict): A dictionary to store review responses
+            from envoys.
+            _review_decision_event (asyncio.Event): An event to signal the review decision.
+            review_consensus (Optional[bool]): A flag indicating if the review consensus
+                is reached.
     """
 
     def __init__(
@@ -79,6 +85,9 @@ class Experiment:
         self.status = Status.PENDING
         self.aggregator = None
         self.updated_flow = None
+        self.review_responses = defaultdict(dict)
+        self.review_decision_event = asyncio.Event()
+        self.review_consensus = None
 
     async def start(
         self,

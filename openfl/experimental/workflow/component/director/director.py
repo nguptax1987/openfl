@@ -47,11 +47,6 @@ class Director:
             in seconds.
         authorized_cols (list): A list of authorized envoys
         review_callback (Optional[Callable]): A callback function for reviewing experiments.
-        review_responses (defaultdict): A dictionary to store review responses
-            from envoys.
-        _review_decision_event (asyncio.Event): An event to signal the review decision.
-        review_consensus (Optional[bool]): A flag indicating if the review consensus
-            is reached.
     """
 
     def __init__(
@@ -98,9 +93,6 @@ class Director:
         self.envoy_health_check_period = envoy_health_check_period
         # authorized_cols refers to envoy & collaborator pair (one to one mapping)
         self.authorized_cols = []
-        self.review_responses = defaultdict(dict)
-        self._review_decision_event = asyncio.Event()
-        self.review_consensus = None
 
     def _cleanup_experiment(self, experiment) -> None:
         """Reset director state and clean up experiment resources.
@@ -111,12 +103,9 @@ class Director:
         Args:
             experiment (Experiment): The experiment to clean up.
         """
-        if experiment.name in self.review_responses:
-            self.review_responses.clear()
         self.col_exp = dict.fromkeys(self.col_exp, None)
-        self.review_consensus = False
-        if not self._review_decision_event.is_set():
-            self._review_decision_event.set()
+        if not experiment.review_decision_event.is_set():
+            experiment.review_decision_event.set()
 
     async def _review_phase(self, experiment) -> None:
         """Coordinates director and envoy reviews.
@@ -136,7 +125,7 @@ class Director:
                     f"Consensus not reached. Experiment '{experiment.name} "
                     "is rejected - skipping execution."
                 )
-        self.review_consensus = review_approved
+        experiment.review_consensus = review_approved
 
     async def _envoy_review(self, experiment) -> bool:
         """Notifies envoys and waits for their consensus.
@@ -168,7 +157,7 @@ class Director:
         )
         # Notify waiting participants that plan is approved
         # and experiment is started
-        self._review_decision_event.set()
+        experiment.review_decision_event.set()
         flow_status = await run_aggregator_future
         await self._flow_status.put(flow_status)
         logger.info(f"Experiment '{experiment.name}' completed successfully.")
@@ -193,7 +182,7 @@ class Director:
                 async with self.experiments_registry.get_next_experiment() as experiment:
                     await self._wait_for_authorized_envoys()
                     await self._review_phase(experiment)
-                    if not self.review_consensus:
+                    if not experiment.review_consensus:
                         experiment.status = Status.REJECTED
                         continue
                     await self._execution_phase(experiment)
@@ -203,7 +192,6 @@ class Director:
                 raise
             finally:
                 self._cleanup_experiment(experiment)
-                self._review_decision_event.clear()
 
     async def get_flow_state(self) -> Tuple[bool, bytes]:
         """Wait until the experiment flow status indicates completion
@@ -270,7 +258,7 @@ class Director:
         self.experiments_registry.add(experiment)
 
         # Waiting for experiment review plan decision
-        await self._review_decision_event.wait()
+        await experiment.review_decision_event.wait()
         return experiment.status != Status.REJECTED
 
     async def stream_experiment_stdout(
@@ -323,7 +311,7 @@ class Director:
         """
         expected_count = len(self.authorized_cols)
         while True:
-            responses = self.review_responses.get(experiment.name, {})
+            responses = experiment.review_responses.get(experiment.name, {})
             if len(responses) == expected_count:
                 all_approve = all(status == "APPROVE" for status in responses.values())
                 logger.info(f"All envoys have responded for experiment '{experiment.name}'.")
@@ -343,9 +331,10 @@ class Director:
         Returns:
             bool: True if all envoys approve the experiment, False otherwise.
         """
-        self.review_responses[experiment_name][envoy_name] = review_status
-        await self._review_decision_event.wait()
-        return self.review_consensus
+        experiment = self.experiments_registry.get(experiment_name)
+        experiment.review_responses[experiment_name][envoy_name] = review_status
+        await experiment.review_decision_event.wait()
+        return experiment.review_consensus
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.
