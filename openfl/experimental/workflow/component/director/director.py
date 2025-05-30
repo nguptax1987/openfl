@@ -115,33 +115,28 @@ class Director:
             self.review_responses.clear()
         self.col_exp = dict.fromkeys(self.col_exp, None)
         self.review_consensus = False
-        self._review_decision_event.set()
+        if not self._review_decision_event.is_set():
+            self._review_decision_event.set()
 
-    async def _review_phase(self, experiment) -> bool:
+    async def _review_phase(self, experiment) -> None:
         """Coordinates director and envoy reviews.
 
         Args:
             experiment (Experiment): The experiment to be reviewed.
-
-        Returns:
-            bool: True if the review consensus is reached, False otherwise.
         """
-        review_approved = consensus_reached = True
+        review_approved = True
         if self.review_callback:
             # Director review
             review_approved = experiment.review_experiment(self.review_callback)
 
         if review_approved:
-            consensus_reached = await self._envoy_review(experiment)
-            if not consensus_reached:
-                experiment.status = Status.REJECTED
+            review_approved = await self._envoy_review(experiment)
+            if not review_approved:
                 logger.info(
                     f"Consensus not reached. Experiment '{experiment.name} "
                     "is rejected - skipping execution."
                 )
-        else:
-            experiment.status = Status.REJECTED
-        self.review_consensus = review_approved and consensus_reached
+        self.review_consensus = review_approved
 
     async def _envoy_review(self, experiment) -> bool:
         """Notifies envoys and waits for their consensus.
@@ -199,6 +194,7 @@ class Director:
                     await self._wait_for_authorized_envoys()
                     await self._review_phase(experiment)
                     if not self.review_consensus:
+                        experiment.status = Status.REJECTED
                         continue
                     await self._execution_phase(experiment)
             except Exception as e:
