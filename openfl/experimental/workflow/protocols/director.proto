@@ -63,11 +63,11 @@ message UpdateEnvoyStatusResponse {
 message SendExperimentReviewRequest {
     string envoy_name = 1;
     string experiment_name = 2;
-    string review_status = 3;  // "APPROVE" or "REJECT"
+    string review_status = 3;
 }
 
 message SendExperimentReviewResponse {
-    bool consensus_reached = 1; // True if all participants (Director + Envoys) have approved, False otherwise
+    bool consensus_reached = 1; 
 }
 
 message ExperimentInfo {
@@ -77,7 +77,7 @@ message ExperimentInfo {
 }
 
 message SetNewExperimentResponse {
-    bool status = 1; // True if approved, False if rejected
+    bool status = 1;
 }
 
 message EnvoyInfo {

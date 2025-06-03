@@ -85,7 +85,7 @@ class Experiment:
         self.status = Status.PENDING
         self.aggregator = None
         self.updated_flow = None
-        self.review_responses = defaultdict(dict)
+        self.review_responses = {} #{envoy_name: response}
         self.review_decision_event = asyncio.Event()
         self.review_consensus = None
 
@@ -138,7 +138,7 @@ class Experiment:
                 self.aggregator = aggregator_grpc_server.aggregator
                 _, self.updated_flow = await asyncio.gather(
                     self._run_aggregator_grpc_server(
-                        aggregator_grpc_server,
+                        aggregator_grpc_server,self 
                     ),
                     self.aggregator.run_flow(),
                 )
@@ -150,6 +150,14 @@ class Experiment:
             raise
 
         return self.status == Status.FINISHED, self.updated_flow
+    def signal_review_completion(self) -> None:
+        """Signal that the review process is complete.
+        
+        This method sets the review decision event notify waiting processes that the review phase 
+        has been finalized. It is typically called after all review responses have been collected.
+        """
+        self.review_decision_event.set()
+
 
     def review_experiment(self, review_plan_callback: Callable[[str, Path], bool]) -> bool:
         """Review the experiment plan.
@@ -219,7 +227,7 @@ class Experiment:
 
     @staticmethod
     async def _run_aggregator_grpc_server(
-        aggregator_grpc_server: AggregatorGRPCServer,
+        aggregator_grpc_server: AggregatorGRPCServer, experiment
     ) -> None:
         """Run aggregator.
 
@@ -231,7 +239,7 @@ class Experiment:
         grpc_server = aggregator_grpc_server.get_server()
         grpc_server.start()
         logger.info("Starting Aggregator gRPC Server")
-
+        experiment.signal_review_completion()
         try:
             while not aggregator_grpc_server.aggregator.all_quit_jobs_sent():
                 # Awaiting quit job sent to collaborators

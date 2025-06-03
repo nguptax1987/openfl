@@ -142,6 +142,33 @@ def replace_line_in_file(line, line_num_to_replace, filename):
         f.truncate()
 
 
+
+def custom_confirm(prompt_message: str) -> bool:
+    """
+    Custom function to prompt for user confirmation, handling Ctrl+C explicitly.
+
+    Args:
+        prompt_message (str): The question to ask the user.
+
+    Returns:
+        bool: True if the user enters 'Y' or 'y'; False otherwise.
+    """
+    while True:
+        try:
+            echo(style(prompt_message + " [Y/N]: ", fg="green", bold=True), nl=False)
+            response = input().strip().lower()
+
+            if response in ["y", "yes"]:
+                return True
+            elif response in ["n", "no"]:
+                return False
+            else:
+                echo(style("Error: invalid input. Please enter 'Y' or 'N'.", fg="red", bold=True))
+        except KeyboardInterrupt:
+            echo(style("\nUser interrupted (Ctrl+C). Treating as rejection.", fg="red", bold=True))
+            return False  # Explicitly treat Ctrl+C as rejection
+
+
 def review_plan_callback(file_name: str, file_path) -> bool:
     """
     Review plan callback for Director and Envoy.
@@ -171,10 +198,14 @@ def review_plan_callback(file_name: str, file_path) -> bool:
         echo(style(f"⚠️ Failed to read file: {e}", fg="red", bold=True))
         return False
 
-    # Ask for user confirmation to accept the file
-    if confirm(style(f"Do you want to accept the 📂 {file_name}❔", fg="green", bold=True)):
-        echo(style(f"{file_name} accepted!", fg="green", bold=True))
-        return True
-    else:
-        echo(style(f"{file_name} rejected!", fg="red", bold=True))
-        return False  # Return False on rejection
+    try:
+        # Ask for user confirmation to accept the file
+        if custom_confirm("Do you want to accept the 📂 {file_name}❔"):
+            echo(style(f"{file_name} accepted!", fg="green", bold=True))
+            return True
+        else:
+            echo(style(f"{file_name} rejected!", fg="red", bold=True))
+            return False  # Return False on rejection
+    except KeyboardInterrupt:
+        echo(style(f"\n{file_name} rejected by user.", fg="red", bold=True))
+        return False   
