@@ -125,18 +125,13 @@ class FLSpec:
 
     def run(self) -> None:
         """Starts the execution of the flow."""
-        try:
-            # Submit flow to Runtime
-            if str(self._runtime) == "LocalRuntime":
-                self._run_local()
-            elif str(self._runtime) == "FederatedRuntime":
-                self._run_federated()
-            else:
-                raise Exception("Runtime not implemented")
-        except Exception as e:
-            # Stop execution and print error message
-            print(f"\033[91m? Flow execution stopped: {e}\033[0m")
-            raise
+        # Submit flow to Runtime
+        if str(self._runtime) == "LocalRuntime":
+            self._run_local()
+        elif str(self._runtime) == "FederatedRuntime":
+            self._run_federated()
+        else:
+            raise Exception("Runtime not implemented")
 
     def _run_local(self) -> None:
         """Executes the flow using LocalRuntime."""

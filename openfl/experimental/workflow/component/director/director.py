@@ -155,9 +155,7 @@ class Director:
                 install_requirements=False,
             )
         )
-        # Notify waiting participants that plan is approved
-        # and experiment is started
-        experiment.review_decision_event.set()
+        # Wait for the aggregator to finish running
         flow_status = await run_aggregator_future
         await self._flow_status.put(flow_status)
         logger.info(f"Experiment '{experiment.name}' completed successfully.")
@@ -311,7 +309,7 @@ class Director:
         """
         expected_count = len(self.authorized_cols)
         while True:
-            responses = experiment.review_responses.get(experiment.name, {})
+            responses = experiment.review_responses
             if len(responses) == expected_count:
                 all_approve = all(status == "APPROVE" for status in responses.values())
                 logger.info(f"All envoys have responded for experiment '{experiment.name}'.")
@@ -332,7 +330,9 @@ class Director:
             bool: True if all envoys approve the experiment, False otherwise.
         """
         experiment = self.experiments_registry.get(experiment_name)
-        experiment.review_responses[experiment_name][envoy_name] = review_status
+        experiment.review_responses[envoy_name] = review_status
+        # Waiting here ensure that the review decision is finalized
+        # Before sending the review_consensus back to envoys.
         await experiment.review_decision_event.wait()
         return experiment.review_consensus
 
