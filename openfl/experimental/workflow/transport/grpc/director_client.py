@@ -291,6 +291,7 @@ class RuntimeDirectorClient:
             name=experiment_name,
             col_names=col_names,
         )
+        logger.info("i am in dir_Clint set_new_experiment")
         resp = self.stub.SetNewExperiment(experiment_info_gen)
         return resp
 

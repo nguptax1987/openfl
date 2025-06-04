@@ -76,8 +76,15 @@ message ExperimentInfo {
     ExperimentData experiment_data = 3;
 }
 
+message ExperimentReviewStatus {
+    string reviewer = 1;
+    string decision = 2;
+    string timestamp = 3;
+}
+
 message SetNewExperimentResponse {
     bool status = 1;
+    repeated ExperimentReviewStatus review_statuses = 2;
 }
 
 message EnvoyInfo {
