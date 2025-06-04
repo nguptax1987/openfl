@@ -187,7 +187,10 @@ class FLSpec:
             # Prepare workspace and submit it for the FederatedRuntime
             archive_path, exp_name = self.runtime.prepare_workspace_archive()
             submission_result = self.runtime.submit_experiment(archive_path, exp_name)
-            if not submission_result:
+            #print("submission_result.review_statuses:",submission_result.review_statuses)
+            for review in submission_result.review_statuses:
+                print(f"{review.reviewer}: {review.decision} , {review.timestamp}")
+            if not submission_result.status:
                 print(f"\033[91m ❌Experiment '{exp_name}' was rejected.\033[0m")
                 return
             #  Experiment was submitted successfully

@@ -313,10 +313,29 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             collaborator_names=request.collaborator_names,
             experiment_archive_path=data_file_path,
         )
+        # Build response with review statuses
+        review_entries = self.director.experiments_registry[request.name].review_details
+        review_statuses = []
+        for reviewer_name, entries in review_entries.items():
+            for entry in entries:
+                review_statuses.append(
+                    director_pb2.ExperimentReviewStatus(
+                        reviewer=entry['reviewer_name'],
+                        decision=entry['decision'],
+                        timestamp=entry['timestamp']
+                    )
+                )
         if not is_accepted:
-            return director_pb2.SetNewExperimentResponse(status=is_accepted)
+            return director_pb2.SetNewExperimentResponse(
+                status=is_accepted, 
+                review_statuses=review_statuses
+            )
         logger.info("Experiment %s registered", request.name)
-        return director_pb2.SetNewExperimentResponse(status=is_accepted)
+        return director_pb2.SetNewExperimentResponse(
+            status=is_accepted,
+            review_statuses=review_statuses
+        )
+        
 
     async def GetFlowState(self, request, context) -> director_pb2.GetFlowStateResponse:
         """Get updated flow after experiment is finished.

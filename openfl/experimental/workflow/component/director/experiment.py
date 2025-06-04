@@ -86,6 +86,7 @@ class Experiment:
         self.aggregator = None
         self.updated_flow = None
         self.review_responses = {} #{envoy_name: response}
+        self.review_details = defaultdict(list)  # reviewer_name → list of {decision, timestamp}
         self.review_decision_event = asyncio.Event()
         self.review_consensus = None
 
