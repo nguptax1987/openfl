@@ -17,9 +17,10 @@ import dill
 from tabulate import tabulate
 
 from openfl.experimental.workflow.notebooktools import NotebookTools
+from openfl.experimental.workflow.protocols import director_pb2
 from openfl.experimental.workflow.runtime.runtime import Runtime
 from openfl.experimental.workflow.transport.grpc.director_client import RuntimeDirectorClient
-from openfl.experimental.workflow.protocols import director_pb2 
+ 
 
 logger = logging.getLogger(__name__)
 
