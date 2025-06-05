@@ -12,7 +12,7 @@ from os import environ
 from pathlib import Path
 from sys import argv
 
-from click import confirm, echo, open_file, style
+from click import echo, open_file, style
 from yaml import FullLoader, load
 
 FX = argv[0]
