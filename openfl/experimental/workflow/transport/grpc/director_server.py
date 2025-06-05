@@ -315,16 +315,15 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
         )
         # Build response with review statuses
         review_entries = self.director.experiments_registry[request.name].review_details
-        review_statuses = []
-        for reviewer_name, entries in review_entries.items():
-            for entry in entries:
-                review_statuses.append(
-                    director_pb2.ExperimentReviewStatus(
-                        reviewer=entry['reviewer_name'],
-                        decision=entry['decision'],
-                        timestamp=entry['timestamp']
-                    )
-                )
+        review_statuses = [
+            director_pb2.ExperimentReviewStatus(
+                reviewer=entry['reviewer_name'],
+                decision=entry['decision'],
+                timestamp=entry['timestamp']
+            )
+            for entries in review_entries.values()
+            for entry in entries
+        ]
         if not is_accepted:
             return director_pb2.SetNewExperimentResponse(
                 status=is_accepted, 

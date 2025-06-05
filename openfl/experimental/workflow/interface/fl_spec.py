@@ -189,7 +189,7 @@ class FLSpec:
             submission_result = self.runtime.submit_experiment(archive_path, exp_name)
             #print("submission_result.review_statuses:",submission_result.review_statuses)
             for review in submission_result.review_statuses:
-                print(f"{review.reviewer}: {review.decision} , {review.timestamp}")
+                print(f"\033[92m{review.reviewer}: {review.decision} , {review.timestamp}\033[0m")
             if not submission_result.status:
                 print(f"\033[91m ❌Experiment '{exp_name}' was rejected.\033[0m")
                 return
