@@ -10,6 +10,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
+from datetime import datetime,timezone
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 from openfl.experimental.workflow.federated import Plan
@@ -151,6 +152,27 @@ class Experiment:
             raise
 
         return self.status == Status.FINISHED, self.updated_flow
+    
+    def record_review(self, reviewer: str, approved: bool) -> None:
+        """
+         Record a review decision for a given reviewer.
+
+         This method appends a structured review entry to the `review_details`
+         dictionary for the specified reviewer, including the reviewer's name,
+         decision status ("APPROVED" or "REJECTED"), and a UTC timestamp.
+
+         Args:
+           reviewer (str): The name or identifier of the reviewer (e.g., 'Director', envoy name).
+           approved (bool): The decision of the reviewer.
+                            Pass True for approval and False for rejection.
+
+        """
+        self.review_details[reviewer].append({
+            'reviewer_name': reviewer,
+            'decision': "APPROVED" if approved else "REJECTED",
+            'timestamp': datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        })
+
     def signal_review_completion(self) -> None:
         """Signal that the review process is complete.
         
