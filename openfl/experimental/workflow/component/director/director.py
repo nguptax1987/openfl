@@ -8,7 +8,6 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Tuple, Union
 
@@ -120,11 +119,8 @@ class Director:
             review_approved = experiment.review_experiment(self.review_callback)
 
         # Add director review to review_details
-        experiment.review_details["director"].append({
-            'reviewer_name': 'Director',
-            'decision': "APPROVED" if review_approved else "REJECTED",
-            'timestamp': datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        })
+        experiment.record_review("Director", review_approved)
+
         if review_approved:
             review_approved = await self._envoy_review(experiment)
             if not review_approved:
@@ -338,11 +334,7 @@ class Director:
         """
         experiment = self.experiments_registry.get(experiment_name)
         experiment.review_responses[envoy_name] = review_status
-        experiment.review_details[envoy_name].append({
-            'reviewer_name': envoy_name,
-            'decision': "APPROVED" if review_status == "APPROVE" else "REJECTED",
-            'timestamp': datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        })
+        experiment.record_review(envoy_name, review_status == "APPROVE")
         # Waiting here ensure that the review decision is finalized
         # Before sending the review_consensus back to envoys.
         await experiment.review_decision_event.wait()
