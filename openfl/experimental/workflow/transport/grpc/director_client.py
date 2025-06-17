@@ -111,7 +111,8 @@ class EnvoyDirectorClient:
             review_status (str): The review status ("APPROVE" or "REJECT").
 
         Returns:
-            bool: True if the response was successfully sent, False otherwise.
+            bool: True if consensus was reached after this review; 
+              False if not or if the request failed.
         """
 
         logger.info(
@@ -291,7 +292,6 @@ class RuntimeDirectorClient:
             name=experiment_name,
             col_names=col_names,
         )
-        logger.info("i am in dir_Clint set_new_experiment")
         resp = self.stub.SetNewExperiment(experiment_info_gen)
         return resp
 

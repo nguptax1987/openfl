@@ -143,7 +143,7 @@ def replace_line_in_file(line, line_num_to_replace, filename):
 
 
 
-def custom_confirm(prompt_message: str) -> bool:
+def prompt_confirmation(prompt_message: str) -> bool:
     """
     Custom function to prompt for user confirmation, handling Ctrl+C explicitly.
 
@@ -200,7 +200,7 @@ def review_plan_callback(file_name: str, file_path) -> bool:
 
     try:
         # Ask for user confirmation to accept the file
-        if custom_confirm("Do you want to accept the 📂 {file_name}❔"):
+        if prompt_confirmation("Do you want to accept the 📂 {file_name}❔"):
             echo(style(f"{file_name} accepted!", fg="green", bold=True))
             return True
         else:

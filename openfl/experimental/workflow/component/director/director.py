@@ -42,11 +42,11 @@ class Director:
             collaborators.
         col_exp_queues (defaultdict): A defaultdict to store the experiment
             queues for collaborators.
-        _envoy_registry (dict): A dcitionary to store envoy info
+        _envoy_registry (dict): A dictionary to store envoy info
         envoy_health_check_period (int): The period for health check of envoys
             in seconds.
         authorized_cols (list): A list of authorized envoys
-        review_callback (Optional[Callable]): A callback function for reviewing experiments.
+        
     """
 
     def __init__(
@@ -77,6 +77,8 @@ class Director:
             in seconds.
             install_requirements (bool, optional): A flag indicating if the
                 requirements should be installed. Defaults to True.
+            review_callback (Optional[Callable]): A callback function for
+                reviewing experiments. Defaults to None.
         """
         self.tls = tls
         self.root_certificate = root_certificate
@@ -113,22 +115,22 @@ class Director:
         Args:
             experiment (Experiment): The experiment to be reviewed.
         """
-        review_approved = True
+        is_approved  = True
         if self.review_callback:
             # Director review
-            review_approved = experiment.review_experiment(self.review_callback)
+            is_approved  = experiment.review_experiment(self.review_callback)
 
         # Add director review to review_details
-        experiment.record_review("Director", review_approved)
+        experiment.record_review("Director", is_approved )
 
-        if review_approved:
-            review_approved = await self._envoy_review(experiment)
-            if not review_approved:
+        if is_approved :
+            is_approved  = await self._envoy_review(experiment)
+            if not is_approved :
                 logger.info(
                     f"Consensus not reached. Experiment '{experiment.name} "
                     "is rejected - skipping execution."
                 )
-        experiment.review_consensus = review_approved
+        experiment.review_consensus = is_approved 
 
     async def _envoy_review(self, experiment) -> bool:
         """Notifies envoys and waits for their consensus.
@@ -146,7 +148,11 @@ class Director:
         return await self.wait_for_all_envoy_reviews(experiment)
 
     async def _execution_phase(self, experiment) -> None:
-        """Handles the execution phase of the experiment."""
+        """Starts the experiment and waits for its execution to complete.
+
+        Args:
+            experiment (Experiment): The experiment to be reviewed.
+        """
         loop = asyncio.get_event_loop()
         run_aggregator_future = loop.create_task(
             experiment.start(
@@ -189,7 +195,6 @@ class Director:
                     await self._execution_phase(experiment)
             except Exception as e:
                 logger.error(f"Error executing experiment '{experiment.name}': {e}")
-                experiment.status = Status.FAILED
                 raise
             finally:
                 self._cleanup_experiment(experiment)
@@ -235,7 +240,7 @@ class Director:
         collaborator_names: Iterable[str],
         experiment_archive_path: Path,
     ) -> bool:
-        """Set new experiment and optionally review experiment .
+        """Set new experiment and optionally review experiment.
 
         Args:
             experiment_name (str): Identifier for the new experiment.

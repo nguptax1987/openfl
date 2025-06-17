@@ -40,6 +40,8 @@ class Envoy:
         executor (ThreadPoolExecutor): The executor for running tasks.
         plan(str): Path to plan.yaml
         _health_check_future (object): The future object for the health check.
+        review_callback (Optional[Callable]): A callback function for reviewing
+            the experiment plan before execution.
     """
 
     DEFAULT_RETRY_TIMEOUT_IN_SECONDS = 5
@@ -198,7 +200,7 @@ class Envoy:
         review_status = "APPROVE"
         if self.review_callback:
             logger.info("🧿 Reviewing the experiment plan before execution...")
-            is_review_approved = self.review_callback("plan", "plan/plan.yaml")
+            is_review_approved = self.review_callback(self.name, self.plan )
             review_status = "APPROVE" if is_review_approved else "REJECT"
 
         logger.info(f"🧿 Sending review result to the director: {review_status}")

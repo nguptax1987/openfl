@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 from copy import deepcopy
+from click import style
 from typing import TYPE_CHECKING, Callable, List, Type, Union
 
 if TYPE_CHECKING:
@@ -22,6 +23,17 @@ from openfl.experimental.workflow.utilities import (
     generate_artifacts,
     should_transfer,
 )
+
+class Bcolors:
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    HEADER = "\033[95m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+    ENDC = "\033[0m"
 
 
 class FLSpec:
@@ -187,14 +199,13 @@ class FLSpec:
             # Prepare workspace and submit it for the FederatedRuntime
             archive_path, exp_name = self.runtime.prepare_workspace_archive()
             submission_result = self.runtime.submit_experiment(archive_path, exp_name)
-            #print("submission_result.review_statuses:",submission_result.review_statuses)
             for review in submission_result.review_statuses:
-                print(f"\033[92m{review.reviewer}: {review.decision} , {review.timestamp}\033[0m")
+                print(f"{Bcolors.OKGREEN}{review.reviewer}: {review.decision} , {review.timestamp}{Bcolors.ENDC}")
             if not submission_result.status:
-                print(f"\033[91m ❌Experiment '{exp_name}' was rejected.\033[0m")
+                print(f"{Bcolors.FAIL}❌Experiment '{exp_name}' was rejected.{Bcolors.ENDC}")
                 return
             #  Experiment was submitted successfully
-            print(f"\033[92m✅Experiment '{exp_name}' approved and running.\033[0m")
+            print(f"{Bcolors.OKGREEN}✅Experiment '{exp_name}' approved and running.{Bcolors.ENDC}")
             # Stream the experiment's stdout if the checkpoint is enabled
             if self._checkpoint:
                 self.runtime.stream_experiment_stdout(exp_name)
