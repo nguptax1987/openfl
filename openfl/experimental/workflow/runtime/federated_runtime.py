@@ -166,21 +166,13 @@ class FederatedRuntime(Runtime):
             exp_name (str): The name of the experiment to be submitted.
 
         Returns:
-            director_pb2.SetNewExperimentResponsee: gRPC response from the director.
+            director_pb2.SetNewExperimentResponse: gRPC response from the director.
         """
         try:
             response = self._runtime_dir_client.set_new_experiment(
                 archive_path=archive_path, experiment_name=exp_name, col_names=self.__collaborators
             )
             return response
-            
-            #self.experiment_submitted = response.status
-
-            #if self.experiment_submitted:
-                #print(f"\033[92m✅Experiment '{exp_name}' was successfully submitted!\033[0m")
-                #return True
-            #else:
-                #return False
         finally:
             self.remove_workspace_archive(archive_path)
 

@@ -31,7 +31,9 @@ class Status(Enum):
 
 
 class Experiment:
-    """Experiment class.
+    """ Manages metadata, review, and execution of a federated experiment.
+
+    Tracks status, collaborators, review decisions, and handles aggregator setup
 
     Attributes:
             name (str): The name of the experiment.
@@ -47,6 +49,9 @@ class Experiment:
             updated_flow (FLSpec): Updated flow instance.
             review_responses (defaultdict): A dictionary to store review responses
             from envoys.
+            review_details (defaultdict): A dictionary to store review details
+            for each reviewer, mapping reviewer names to lists of review
+            decisions and timestamps.
             _review_decision_event (asyncio.Event): An event to signal the review decision.
             review_consensus (Optional[bool]): A flag indicating if the review consensus
                 is reached.
@@ -154,12 +159,7 @@ class Experiment:
         return self.status == Status.FINISHED, self.updated_flow
     
     def record_review(self, reviewer: str, approved: bool) -> None:
-        """
-         Record a review decision for a given reviewer.
-
-         This method appends a structured review entry to the `review_details`
-         dictionary for the specified reviewer, including the reviewer's name,
-         decision status ("APPROVED" or "REJECTED"), and a UTC timestamp.
+        """Record a review decision with status and timestamp for the given reviewer.
 
          Args:
            reviewer (str): The name or identifier of the reviewer (e.g., 'Director', envoy name).
