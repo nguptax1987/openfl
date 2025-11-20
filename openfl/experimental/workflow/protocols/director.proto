@@ -15,6 +15,7 @@ service Director {
     rpc WaitExperiment(WaitExperimentRequest) returns (WaitExperimentResponse) {}
     rpc GetExperimentData(GetExperimentDataRequest) returns (stream ExperimentData) {}
     rpc UpdateEnvoyStatus(UpdateEnvoyStatusRequest) returns (UpdateEnvoyStatusResponse) {}
+    rpc SendExperimentReview(SendExperimentReviewRequest) returns (SendExperimentReviewResponse) {}
 
     //Runtime RPCs
     rpc SetNewExperiment(stream ExperimentInfo) returns (SetNewExperimentResponse) {}
@@ -59,14 +60,31 @@ message UpdateEnvoyStatusResponse {
     google.protobuf.Duration health_check_period = 1;
 }
 
+message SendExperimentReviewRequest {
+    string envoy_name = 1;
+    string experiment_name = 2;
+    string review_status = 3;
+}
+
+message SendExperimentReviewResponse {
+    bool consensus_reached = 1; 
+}
+
 message ExperimentInfo {
     string name = 1;
     repeated string collaborator_names = 2;
     ExperimentData experiment_data = 3;
 }
 
+message ExperimentReviewStatus {
+    string reviewer = 1;
+    string decision = 2;
+    string timestamp = 3;
+}
+
 message SetNewExperimentResponse {
     bool status = 1;
+    repeated ExperimentReviewStatus review_statuses = 2;
 }
 
 message EnvoyInfo {

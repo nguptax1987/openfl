@@ -17,8 +17,10 @@ import dill
 from tabulate import tabulate
 
 from openfl.experimental.workflow.notebooktools import NotebookTools
+from openfl.experimental.workflow.protocols import director_pb2
 from openfl.experimental.workflow.runtime.runtime import Runtime
 from openfl.experimental.workflow.transport.grpc.director_client import RuntimeDirectorClient
+ 
 
 logger = logging.getLogger(__name__)
 
@@ -155,27 +157,22 @@ class FederatedRuntime(Runtime):
         )
         return archive_path, exp_name
 
-    def submit_experiment(self, archive_path, exp_name) -> None:
+    def submit_experiment(self, archive_path, exp_name) -> director_pb2.SetNewExperimentResponse:
         """
         Submits experiment archive to the director
 
         Args:
             archive_path (str): Archive file path containing the workspace.
             exp_name (str): The name of the experiment to be submitted.
+
+        Returns:
+            director_pb2.SetNewExperimentResponse: gRPC response from the director.
         """
         try:
             response = self._runtime_dir_client.set_new_experiment(
                 archive_path=archive_path, experiment_name=exp_name, col_names=self.__collaborators
             )
-            self.experiment_submitted = response.status
-
-            if self.experiment_submitted:
-                print(
-                    f"\033[92mExperiment {exp_name} was successfully "
-                    "submitted to the director!\033[0m"
-                )
-            else:
-                print(f"\033[91mFailed to submit experiment '{exp_name}' to the director.\033[0m")
+            return response
         finally:
             self.remove_workspace_archive(archive_path)
 

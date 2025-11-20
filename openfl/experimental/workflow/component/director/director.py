@@ -9,13 +9,14 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, Iterable, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Callable, Dict, Iterable, Optional, Tuple, Union
 
 import dill
 
 from openfl.experimental.workflow.component.director.experiment import (
     Experiment,
     ExperimentsRegistry,
+    Status,
 )
 from openfl.experimental.workflow.transport.grpc.exceptions import EnvoyNotFoundError
 
@@ -41,10 +42,11 @@ class Director:
             collaborators.
         col_exp_queues (defaultdict): A defaultdict to store the experiment
             queues for collaborators.
-        _envoy_registry (dict): A dcitionary to store envoy info
+        _envoy_registry (dict): A dictionary to store envoy info
         envoy_health_check_period (int): The period for health check of envoys
             in seconds.
         authorized_cols (list): A list of authorized envoys
+        
     """
 
     def __init__(
@@ -57,6 +59,7 @@ class Director:
         director_config: Optional[Path] = None,
         envoy_health_check_period: int = 60,
         install_requirements: bool = True,
+        review_callback: Optional[Callable] = None,
     ) -> None:
         """Initialize a Director object.
 
@@ -74,6 +77,8 @@ class Director:
             in seconds.
             install_requirements (bool, optional): A flag indicating if the
                 requirements should be installed. Defaults to True.
+            review_callback (Optional[Callable]): A callback function for
+                reviewing experiments. Defaults to None.
         """
         self.tls = tls
         self.root_certificate = root_certificate
@@ -82,7 +87,7 @@ class Director:
         self.director_config = director_config
         self.install_requirements = install_requirements
         self._flow_status = asyncio.Queue()
-
+        self.review_callback = review_callback
         self.experiments_registry = ExperimentsRegistry()
         self.col_exp = {}
         self.col_exp_queues = defaultdict(asyncio.Queue)
@@ -91,33 +96,78 @@ class Director:
         # authorized_cols refers to envoy & collaborator pair (one to one mapping)
         self.authorized_cols = []
 
-    async def start_experiment_execution_loop(self) -> None:
-        """Run tasks and experiments here"""
+    def _cleanup_experiment(self, experiment) -> None:
+        """Reset director state and clean up experiment resources.
+
+        Clears the experiment from the registry, resets collaborator states,
+        review responses, and consensus flag.
+
+        Args:
+            experiment (Experiment): The experiment to clean up.
+        """
+        self.col_exp = dict.fromkeys(self.col_exp, None)
+        if not experiment.review_decision_event.is_set():
+            experiment.review_decision_event.set()
+
+    async def _review_phase(self, experiment) -> None:
+        """Coordinates director and envoy reviews.
+
+        Args:
+            experiment (Experiment): The experiment to be reviewed.
+        """
+        is_approved  = True
+        if self.review_callback:
+            # Director review
+            is_approved  = experiment.review_experiment(self.review_callback)
+
+        # Add director review to review_details
+        experiment.record_review("Director", is_approved )
+
+        if is_approved :
+            is_approved  = await self._envoy_review(experiment)
+            if not is_approved :
+                logger.info(
+                    f"Consensus not reached. Experiment '{experiment.name} "
+                    "is rejected - skipping execution."
+                )
+        experiment.review_consensus = is_approved 
+
+    async def _envoy_review(self, experiment) -> bool:
+        """Notifies envoys and waits for their consensus.
+
+        Args:
+            experiment (Experiment): The experiment to be reviewed.
+
+        Returns:
+            bool: True if all envoys approve the experiment, False otherwise.
+        """
+        for col_name in experiment.collaborators:
+            await self.col_exp_queues[col_name].put(experiment.name)
+
+        logger.info("Waiting for envoy reviews...")
+        return await self.wait_for_all_envoy_reviews(experiment)
+
+    async def _execution_phase(self, experiment) -> None:
+        """Starts the experiment and waits for its execution to complete.
+
+        Args:
+            experiment (Experiment): The experiment to be reviewed.
+        """
         loop = asyncio.get_event_loop()
-        while True:
-            try:
-                async with self.experiments_registry.get_next_experiment() as experiment:
-                    await self._wait_for_authorized_envoys()
-                    run_aggregator_future = loop.create_task(
-                        experiment.start(
-                            root_certificate=self.root_certificate,
-                            certificate=self.certificate,
-                            private_key=self.private_key,
-                            tls=self.tls,
-                            director_config=self.director_config,
-                            install_requirements=self.install_requirements,
-                        )
-                    )
-                    # Adding the experiment to collaborators queues
-                    for col_name in experiment.collaborators:
-                        queue = self.col_exp_queues[col_name]
-                        await queue.put(experiment.name)
-                    # Wait for the experiment to complete and save the result
-                    flow_status = await run_aggregator_future
-                    await self._flow_status.put(flow_status)
-            except Exception as e:
-                logger.error(f"Error while executing experiment: {e}")
-                raise
+        run_aggregator_future = loop.create_task(
+            experiment.start(
+                root_certificate=self.root_certificate,
+                certificate=self.certificate,
+                private_key=self.private_key,
+                tls=self.tls,
+                director_config=self.director_config,
+                install_requirements=False,
+            )
+        )
+        # Wait for the aggregator to finish running
+        flow_status = await run_aggregator_future
+        await self._flow_status.put(flow_status)
+        logger.info(f"Experiment '{experiment.name}' completed successfully.")
 
     async def _wait_for_authorized_envoys(self) -> None:
         """Wait until all authorized envoys are connected"""
@@ -130,6 +180,24 @@ class Director:
                 "authorized envoys to connect..."
             )
             await asyncio.sleep(10)
+
+    async def start_experiment_execution_loop(self) -> None:
+        """Main loop that waits for and runs tasks and experiments here."""
+        while True:
+            try:
+                logger.info("Waiting for an experiment to run...")
+                async with self.experiments_registry.get_next_experiment() as experiment:
+                    await self._wait_for_authorized_envoys()
+                    await self._review_phase(experiment)
+                    if not experiment.review_consensus:
+                        experiment.status = Status.REJECTED
+                        continue
+                    await self._execution_phase(experiment)
+            except Exception as e:
+                logger.error(f"Error executing experiment '{experiment.name}': {e}")
+                raise
+            finally:
+                self._cleanup_experiment(experiment)
 
     async def get_flow_state(self) -> Tuple[bool, bytes]:
         """Wait until the experiment flow status indicates completion
@@ -172,16 +240,16 @@ class Director:
         collaborator_names: Iterable[str],
         experiment_archive_path: Path,
     ) -> bool:
-        """Set new experiment.
+        """Set new experiment and optionally review experiment.
 
         Args:
-            experiment_name (str): String id for experiment.
-            sender_name (str): The name of the sender.
-            collaborator_names (Iterable[str]): Names of collaborators.
-            experiment_archive_path (Path): Path of the experiment.
+            experiment_name (str): Identifier for the new experiment.
+            sender_name (str): Initiator of the experiment.
+            collaborator_names (Iterable[str]): Participating collaborators.
+            experiment_archive_path (Path): Path to the experiment archive.
 
         Returns:
-            bool : Boolean returned if the experiment register was successful.
+            bool: True if the experiment is accepted and registered; False otherwise.
         """
         experiment = Experiment(
             name=experiment_name,
@@ -191,9 +259,13 @@ class Director:
             sender=sender_name,
         )
 
+        # Add the experiment to the registry
         self.authorized_cols = collaborator_names
         self.experiments_registry.add(experiment)
-        return True
+
+        # Waiting for experiment review plan decision
+        await experiment.review_decision_event.wait()
+        return experiment.status != Status.REJECTED
 
     async def stream_experiment_stdout(
         self, experiment_name: str, caller: str
@@ -220,6 +292,7 @@ class Director:
                 f'No experiment name "{experiment_name}" in experiments list, or caller "{caller}"'
                 f" does not have access to this experiment"
             )
+
         while not self.experiments_registry[experiment_name].aggregator:
             await asyncio.sleep(5)
         aggregator = self.experiments_registry[experiment_name].aggregator
@@ -233,6 +306,44 @@ class Director:
             else:
                 # Yield none if the queue is empty but the experiment is still running.
                 yield None
+
+    async def wait_for_all_envoy_reviews(self, experiment: Experiment) -> bool:
+        """Wait for all envoys to respond with APPROVE or REJECT.
+
+        Args:
+            experiment (Experiment): The experiment being reviewed.
+        Returns:
+            bool: True if all envoys approve the experiment, False otherwise.
+        """
+        expected_count = len(self.authorized_cols)
+        while True:
+            responses = experiment.review_responses
+            if len(responses) == expected_count:
+                all_approve = all(status == "APPROVE" for status in responses.values())
+                logger.info(f"All envoys have responded for experiment '{experiment.name}'.")
+                return all_approve
+
+            await asyncio.sleep(1)  # Waits for 1 second before the next check.
+
+    async def process_review_response(
+        self, envoy_name: str, experiment_name: str, review_status: str
+    ) -> bool:
+        """Process a review response from an envoy. Collects review responses and
+            check if consensus is achieved.
+        Args:
+             envoy_name (str): Envoy sending the response.
+             experiment_name (str): The name of the experiment being reviewed.
+             review_status (str): "APPROVE" or "REJECT".
+        Returns:
+            bool: True if all envoys approve the experiment, False otherwise.
+        """
+        experiment = self.experiments_registry.get(experiment_name)
+        experiment.review_responses[envoy_name] = review_status
+        experiment.record_review(envoy_name, review_status == "APPROVE")
+        # Waiting here ensure that the review decision is finalized
+        # Before sending the review_consensus back to envoys.
+        await experiment.review_decision_event.wait()
+        return experiment.review_consensus
 
     def get_experiment_data(self, experiment_name: str) -> Path:
         """Get experiment data.

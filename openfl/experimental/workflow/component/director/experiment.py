@@ -6,10 +6,12 @@
 
 import asyncio
 import logging
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from datetime import datetime,timezone
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 from openfl.experimental.workflow.federated import Plan
 from openfl.experimental.workflow.transport import AggregatorGRPCServer
@@ -29,7 +31,9 @@ class Status(Enum):
 
 
 class Experiment:
-    """Experiment class.
+    """ Manages metadata, review, and execution of a federated experiment.
+
+    Tracks status, collaborators, review decisions, and handles aggregator setup
 
     Attributes:
             name (str): The name of the experiment.
@@ -43,6 +47,14 @@ class Experiment:
             status (str): The status of the experiment.
             aggregator (Aggregator): The aggregator instance.
             updated_flow (FLSpec): Updated flow instance.
+            review_responses (defaultdict): A dictionary to store review responses
+            from envoys.
+            review_details (defaultdict): A dictionary to store review details
+            for each reviewer, mapping reviewer names to lists of review
+            decisions and timestamps.
+            _review_decision_event (asyncio.Event): An event to signal the review decision.
+            review_consensus (Optional[bool]): A flag indicating if the review consensus
+                is reached.
     """
 
     def __init__(
@@ -79,6 +91,10 @@ class Experiment:
         self.status = Status.PENDING
         self.aggregator = None
         self.updated_flow = None
+        self.review_responses = {} #{envoy_name: response}
+        self.review_details = defaultdict(list)  # reviewer_name → list of {decision, timestamp}
+        self.review_decision_event = asyncio.Event()
+        self.review_consensus = None
 
     async def start(
         self,
@@ -129,7 +145,7 @@ class Experiment:
                 self.aggregator = aggregator_grpc_server.aggregator
                 _, self.updated_flow = await asyncio.gather(
                     self._run_aggregator_grpc_server(
-                        aggregator_grpc_server,
+                        aggregator_grpc_server,self 
                     ),
                     self.aggregator.run_flow(),
                 )
@@ -141,6 +157,58 @@ class Experiment:
             raise
 
         return self.status == Status.FINISHED, self.updated_flow
+    
+    def record_review(self, reviewer: str, approved: bool) -> None:
+        """Record a review decision with status and timestamp for the given reviewer.
+
+         Args:
+           reviewer (str): The name or identifier of the reviewer (e.g., 'Director', envoy name).
+           approved (bool): The decision of the reviewer.
+                            Pass True for approval and False for rejection.
+
+        """
+        self.review_details[reviewer].append({
+            'reviewer_name': reviewer,
+            'decision': "APPROVED" if approved else "REJECTED",
+            'timestamp': datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        })
+
+    def signal_review_completion(self) -> None:
+        """Signal that the review process is complete.
+        
+        This method sets the review decision event notify waiting processes that the review phase 
+        has been finalized. It is typically called after all review responses have been collected.
+        """
+        self.review_decision_event.set()
+
+
+    def review_experiment(self, review_plan_callback: Callable[[str, Path], bool]) -> bool:
+        """Review the experiment plan.
+
+        This method allows for reviewing the experiment plan before it is
+        executed.
+
+        Args:
+            review_plan_callback (Callable): A callable that takes
+                (experiment_name, plan_path)
+
+        Returns:
+            bool: True if approved, False otherwise.
+        """
+        logger.debug("Experiment review started")
+        # Extract the workspace for review (without installing requirements)
+        with ExperimentWorkspace(
+            self.name, self.archive_path, install_requirements=False, remove_archive=False
+        ):
+            approved = review_plan_callback(self.name, self.plan_path)
+            if not approved:
+                self.status = Status.REJECTED
+                self.archive_path.unlink(missing_ok=True)
+                logger.info(f"Experiment {self.name} rejected")
+                return False
+
+        logger.info(f"Experiment {self.name} approved")
+        return True
 
     def _create_aggregator_grpc_server(
         self,
@@ -182,7 +250,7 @@ class Experiment:
 
     @staticmethod
     async def _run_aggregator_grpc_server(
-        aggregator_grpc_server: AggregatorGRPCServer,
+        aggregator_grpc_server: AggregatorGRPCServer, experiment
     ) -> None:
         """Run aggregator.
 
@@ -194,7 +262,7 @@ class Experiment:
         grpc_server = aggregator_grpc_server.get_server()
         grpc_server.start()
         logger.info("Starting Aggregator gRPC Server")
-
+        experiment.signal_review_completion()
         try:
             while not aggregator_grpc_server.aggregator.all_quit_jobs_sent():
                 # Awaiting quit job sent to collaborators

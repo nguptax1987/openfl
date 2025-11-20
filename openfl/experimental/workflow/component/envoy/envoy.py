@@ -9,7 +9,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 from openfl.experimental.workflow.federated import Plan
 from openfl.experimental.workflow.transport.grpc.director_client import EnvoyDirectorClient
@@ -40,6 +40,8 @@ class Envoy:
         executor (ThreadPoolExecutor): The executor for running tasks.
         plan(str): Path to plan.yaml
         _health_check_future (object): The future object for the health check.
+        review_callback (Optional[Callable]): A callback function for reviewing
+            the experiment plan before execution.
     """
 
     DEFAULT_RETRY_TIMEOUT_IN_SECONDS = 5
@@ -56,6 +58,7 @@ class Envoy:
         certificate: Optional[Union[Path, str]] = None,
         tls: bool = True,
         install_requirements: bool = True,
+        review_callback: Union[None, Callable] = None,
     ) -> None:
         """Initialize a envoy object.
 
@@ -87,6 +90,7 @@ class Envoy:
         # experiment workspace provided by the director
         self.plan = "plan/plan.yaml"
         self._health_check_future = None
+        self.review_callback = review_callback
 
     def _create_envoy_dir_client(
         self, director_host: str, director_port: int
@@ -138,18 +142,26 @@ class Envoy:
                 # Wait for experiment from Director server
                 experiment_name = self._envoy_dir_client.wait_experiment()
                 data_stream = self._envoy_dir_client.get_experiment_data(experiment_name)
+                data_file_path = self._save_data_stream_to_file(data_stream)
             except Exception as exc:
                 logger.exception("Failed to get experiment: %s", exc)
                 time.sleep(self.DEFAULT_RETRY_TIMEOUT_IN_SECONDS)
                 continue
-            data_file_path = self._save_data_stream_to_file(data_stream)
-
             try:
                 with ExperimentWorkspace(
                     experiment_name=f"{self.name}_{experiment_name}",
                     data_file_path=data_file_path,
-                    install_requirements=self.install_requirements,
+                    install_requirements=False,
                 ):
+                    if not self._review_phase(experiment_name):
+                        logger.info(
+                            f'⚠️ Experiment "{experiment_name}" was rejected by Envoy "{self.name}".'
+                        )
+                        continue
+                    logger.info(
+                        f'Experiment "{experiment_name}" is accepted by Envoy "{self.name}".'
+                    )
+                    logger.info("🚀 Starting experiment execution...")
                     self.is_experiment_running = True
                     self._run_collaborator()
             except Exception as exc:
@@ -175,6 +187,29 @@ class Envoy:
                 else:
                     raise Exception("Broken archive")
         return data_file_path
+
+    def _review_phase(self, experiment_name: str) -> bool:
+        """Review phase for the experiment.
+
+        Args:
+            experiment_name (str): The name of the experiment.
+
+        Returns:
+            bool: True if the review is approved, False otherwise.
+        """
+        review_status = "APPROVE"
+        if self.review_callback:
+            logger.info("🧿 Reviewing the experiment plan before execution...")
+            is_review_approved = self.review_callback(self.name, self.plan )
+            review_status = "APPROVE" if is_review_approved else "REJECT"
+
+        logger.info(f"🧿 Sending review result to the director: {review_status}")
+        consensus_reached = self._envoy_dir_client.send_experiment_review(
+            envoy_name=self.name,
+            experiment_name=experiment_name,
+            review_status=review_status,
+        )
+        return consensus_reached
 
     def _send_health_check(self) -> None:
         """Send health check to the director."""

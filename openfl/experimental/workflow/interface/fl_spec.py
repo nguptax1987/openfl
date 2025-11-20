@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 from copy import deepcopy
+from click import style
 from typing import TYPE_CHECKING, Callable, List, Type, Union
 
 if TYPE_CHECKING:
@@ -22,6 +23,17 @@ from openfl.experimental.workflow.utilities import (
     generate_artifacts,
     should_transfer,
 )
+
+class Bcolors:
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    HEADER = "\033[95m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+    ENDC = "\033[0m"
 
 
 class FLSpec:
@@ -186,14 +198,22 @@ class FLSpec:
         try:
             # Prepare workspace and submit it for the FederatedRuntime
             archive_path, exp_name = self.runtime.prepare_workspace_archive()
-            self.runtime.submit_experiment(archive_path, exp_name)
+            submission_result = self.runtime.submit_experiment(archive_path, exp_name)
+            for review in submission_result.review_statuses:
+                print(f"{Bcolors.OKGREEN}{review.reviewer}: {review.decision} , {review.timestamp}{Bcolors.ENDC}")
+            if not submission_result.status:
+                print(f"{Bcolors.FAIL}❌Experiment '{exp_name}' was rejected.{Bcolors.ENDC}")
+                return
+            #  Experiment was submitted successfully
+            print(f"{Bcolors.OKGREEN}✅Experiment '{exp_name}' approved and running.{Bcolors.ENDC}")
             # Stream the experiment's stdout if the checkpoint is enabled
             if self._checkpoint:
                 self.runtime.stream_experiment_stdout(exp_name)
             # Retrieve the flspec object to update the experiment state
             flspec_obj = self._get_flow_state()
             # Update state of self
-            self._update_from_flspec_obj(flspec_obj)
+            if flspec_obj:
+                self._update_from_flspec_obj(flspec_obj)
         except Exception as e:
             raise Exception(
                 f"FederatedRuntime: Experiment {exp_name} failed to run due to error: {e}"

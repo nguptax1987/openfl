@@ -55,6 +55,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
         listen_port: int = 50051,
         envoy_health_check_period: int = 0,
         director_config: Optional[Path] = None,
+        review_callback=None,  # Add review_callback parameter
         **kwargs,
     ) -> None:
         """
@@ -78,6 +79,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             listen_port (int, optional): The port to listen on. Defaults to
                 50051.
             director_config (Optional[Path]): Path to director_config file
+            review_callback (Optional[Callable]): Callback function for reviewing experiment plans.
             **kwargs: Additional keyword arguments.
         """
         super().__init__()
@@ -93,6 +95,7 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             certificate=self.certificate,
             envoy_health_check_period=envoy_health_check_period,
             director_config=director_config,
+            review_callback=review_callback,  # Pass review_callback to Director
             **kwargs,
         )
 
@@ -310,9 +313,28 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
             collaborator_names=request.collaborator_names,
             experiment_archive_path=data_file_path,
         )
-
+        # Build response with review statuses
+        review_entries = self.director.experiments_registry[request.name].review_details
+        review_statuses = [
+            director_pb2.ExperimentReviewStatus(
+                reviewer=entry['reviewer_name'],
+                decision=entry['decision'],
+                timestamp=entry['timestamp']
+            )
+            for entries in review_entries.values()
+            for entry in entries
+        ]
+        if not is_accepted:
+            return director_pb2.SetNewExperimentResponse(
+                status=is_accepted, 
+                review_statuses=review_statuses
+            )
         logger.info("Experiment %s registered", request.name)
-        return director_pb2.SetNewExperimentResponse(status=is_accepted)
+        return director_pb2.SetNewExperimentResponse(
+            status=is_accepted,
+            review_statuses=review_statuses
+        )
+        
 
     async def GetFlowState(self, request, context) -> director_pb2.GetFlowStateResponse:
         """Get updated flow after experiment is finished.
@@ -356,3 +378,31 @@ class DirectorGRPCServer(director_pb2_grpc.DirectorServicer):
                 await asyncio.sleep(1)
                 continue
             yield director_pb2.GetExperimentStdoutResponse(**stdout_dict)
+
+    async def SendExperimentReview(self, request, context):
+        """
+         Handle experiment review result from an envoy.
+
+         Args:
+            request (director_pb2.SendExperimentReviewRequest): Contains:
+               - envoy_name: Name of the envoy sending the review
+               - experiment_name: Name of the experiment being reviewed
+               - review_status: "APPROVE" or "REJECT"
+            context (grpc.ServicerContext): The gRPC context
+
+        Returns:
+            director_pb2.SendExperimentReviewResponse: Contains consensus_reached status
+
+        """
+        logger.info(
+            f"Received review response from envoy '{request.envoy_name}' for "
+            f"experiment '{request.experiment_name}' with status '{request.review_status}'."
+        )
+        consensus_reached = await self.director.process_review_response(
+            envoy_name=request.envoy_name,
+            experiment_name=request.experiment_name,
+            review_status=request.review_status,
+        )
+        response = director_pb2.SendExperimentReviewResponse()
+        response.consensus_reached = consensus_reached
+        return response
